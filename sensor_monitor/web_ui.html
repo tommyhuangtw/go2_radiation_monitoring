@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Go2 Patrol Monitor</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; }
+
+  header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 20px; background: #16213e; border-bottom: 2px solid #0f3460;
+  }
+  header h1 { font-size: 1.3em; font-weight: 600; }
+  #status-badge {
+    padding: 4px 14px; border-radius: 12px; font-size: 0.85em; font-weight: 600;
+    background: #555; text-transform: uppercase;
+  }
+
+  .main-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+    padding: 12px; max-width: 1400px; margin: 0 auto;
+  }
+
+  .panel {
+    background: #16213e; border-radius: 8px; border: 1px solid #0f3460; overflow: hidden;
+  }
+  .panel-header {
+    padding: 8px 14px; background: #0f3460; font-size: 0.85em; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .panel-body { padding: 12px; }
+
+  /* Floor plan */
+  #map-panel { position: relative; }
+  #map-container { position: relative; width: 100%; background: #111; }
+  #floor-plan-img {
+    display: block; width: 100%; height: auto; opacity: 0;
+    transition: opacity 0.3s;
+  }
+  #floor-plan-img.loaded { opacity: 1; }
+  #map-canvas {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    pointer-events: none;
+  }
+  #map-no-data { padding: 40px; text-align: center; color: #888; }
+
+  /* Camera */
+  #camera-feed {
+    display: block; width: 100%; max-height: 350px; object-fit: contain;
+    background: #000; border-radius: 4px;
+  }
+  #camera-error { display: none; padding: 60px 20px; text-align: center; color: #888; background: #111; border-radius: 4px; }
+
+  /* Controls */
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .btn {
+    padding: 10px 20px; border: none; border-radius: 6px; font-size: 0.95em;
+    font-weight: 600; cursor: pointer; transition: all 0.15s;
+  }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-start { background: #27ae60; color: #fff; }
+  .btn-start:hover:not(:disabled) { background: #2ecc71; }
+  .btn-next { background: #2980b9; color: #fff; }
+  .btn-next:hover:not(:disabled) { background: #3498db; }
+  .btn-stop { background: #c0392b; color: #fff; }
+  .btn-stop:hover:not(:disabled) { background: #e74c3c; }
+
+  /* Progress */
+  .progress-section { margin-bottom: 12px; }
+  .progress-bar-bg {
+    width: 100%; height: 20px; background: #2c3e50; border-radius: 10px; overflow: hidden;
+  }
+  .progress-bar-fill {
+    height: 100%; background: linear-gradient(90deg, #2980b9, #27ae60);
+    transition: width 0.3s; border-radius: 10px;
+  }
+  .progress-text { font-size: 0.85em; color: #aaa; margin-top: 4px; }
+
+  /* Live data */
+  .data-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+  }
+  .data-item {
+    background: #1a1a2e; padding: 10px; border-radius: 6px; border: 1px solid #2c3e50;
+  }
+  .data-label { font-size: 0.75em; color: #888; text-transform: uppercase; margin-bottom: 2px; }
+  .data-value { font-size: 1.2em; font-weight: 600; font-family: 'Courier New', monospace; }
+  .data-item.sensor-safe .data-value { color: #2ecc71; }
+  .data-item.sensor-warn .data-value { color: #f39c12; }
+  .data-item.sensor-danger .data-value { color: #e74c3c; }
+
+  /* Thresholds */
+  .threshold-row {
+    display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap;
+  }
+  .threshold-row label { font-size: 0.8em; color: #aaa; }
+  .threshold-row input {
+    width: 70px; padding: 4px 6px; border: 1px solid #2c3e50; border-radius: 4px;
+    background: #1a1a2e; color: #eee; font-size: 0.85em;
+  }
+
+  /* Waypoint table */
+  .wp-table-wrap { max-height: 250px; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+  th { background: #0f3460; padding: 6px 8px; text-align: left; position: sticky; top: 0; }
+  td { padding: 5px 8px; border-bottom: 1px solid #2c3e50; }
+  tr.wp-done td { color: #2ecc71; }
+  tr.wp-navigating td { color: #3498db; }
+  tr.wp-collecting td { color: #f39c12; }
+  tr.wp-waiting td { color: #e67e22; }
+  tr.wp-pending td { color: #777; }
+
+  /* Heatmap section */
+  #heatmap-section { display: none; grid-column: 1 / -1; }
+  #heatmap-container { position: relative; width: 100%; background: #111; }
+  #heatmap-img { display: block; width: 100%; height: auto; opacity: 0; transition: opacity 0.3s; }
+  #heatmap-img.loaded { opacity: 1; }
+  #heatmap-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+  .legend-bar {
+    display: flex; align-items: center; gap: 8px; padding: 8px 0; font-size: 0.8em;
+  }
+  .legend-gradient {
+    flex: 1; height: 16px; border-radius: 3px;
+    background: linear-gradient(90deg, #2ecc71, #f1c40f, #e74c3c);
+  }
+
+  /* Connection indicator */
+  .conn-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px;
+  }
+  .conn-dot.on { background: #2ecc71; }
+  .conn-dot.off { background: #e74c3c; }
+
+  /* Full width panels */
+  .full-width { grid-column: 1 / -1; }
+
+  @media (max-width: 800px) {
+    .main-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Go2 Patrol Monitor</h1>
+  <span id="status-badge">Connecting...</span>
+</header>
+
+<div class="main-grid">
+
+  <!-- Floor Plan -->
+  <div class="panel" id="map-panel">
+    <div class="panel-header">Floor Plan</div>
+    <div class="panel-body">
+      <div id="map-container">
+        <img id="floor-plan-img" src="/api/floor_plan" alt="Floor Plan"
+             onload="this.classList.add('loaded'); initMapCanvas();"
+             onerror="document.getElementById('map-no-data').style.display='block';">
+        <canvas id="map-canvas"></canvas>
+        <div id="map-no-data">No floor plan available.<br>Run lidar_mapper.py first.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Camera Feed -->
+  <div class="panel">
+    <div class="panel-header">Camera Feed</div>
+    <div class="panel-body">
+      <img id="camera-feed" src="/video" alt="Camera Feed"
+           onerror="this.style.display='none'; document.getElementById('camera-error').style.display='block';">
+      <div id="camera-error">Camera unavailable</div>
+    </div>
+  </div>
+
+  <!-- Controls + Progress -->
+  <div class="panel">
+    <div class="panel-header">Controls</div>
+    <div class="panel-body">
+      <div class="controls">
+        <button class="btn btn-start" id="btn-start" onclick="sendCmd('start')">Start Patrol</button>
+        <button class="btn btn-next" id="btn-next" onclick="sendCmd('next')" disabled>Next Point</button>
+        <button class="btn btn-stop" id="btn-stop" onclick="sendCmd('stop')">Emergency Stop</button>
+      </div>
+      <div class="progress-section">
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="progress-fill" style="width: 0%"></div>
+        </div>
+        <div class="progress-text" id="progress-text">Waiting to start...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Live Data -->
+  <div class="panel">
+    <div class="panel-header">Live Data</div>
+    <div class="panel-body">
+      <div class="data-grid">
+        <div class="data-item">
+          <div class="data-label">Position X</div>
+          <div class="data-value" id="val-x">--</div>
+        </div>
+        <div class="data-item">
+          <div class="data-label">Position Y</div>
+          <div class="data-value" id="val-y">--</div>
+        </div>
+        <div class="data-item">
+          <div class="data-label">Heading</div>
+          <div class="data-value" id="val-yaw">--</div>
+        </div>
+        <div class="data-item" id="sensor-item">
+          <div class="data-label">
+            <span class="conn-dot off" id="sensor-dot"></span>Sensor
+          </div>
+          <div class="data-value" id="val-sensor">N/A</div>
+        </div>
+      </div>
+      <div class="threshold-row">
+        <label>Safe &lt;</label>
+        <input type="number" id="thresh-safe" value="300" onchange="saveThresholds()">
+        <label>Warn &lt;</label>
+        <input type="number" id="thresh-warn" value="600" onchange="saveThresholds()">
+        <label>Danger &ge;</label>
+        <input type="number" id="thresh-danger" value="600" disabled
+               style="background:transparent; border-color:#555;">
+      </div>
+    </div>
+  </div>
+
+  <!-- Waypoint Log -->
+  <div class="panel full-width">
+    <div class="panel-header">Waypoint Log</div>
+    <div class="panel-body">
+      <div class="wp-table-wrap">
+        <table>
+          <thead><tr><th>#</th><th>Position</th><th>Sensor</th><th>Status</th></tr></thead>
+          <tbody id="wp-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Heatmap (shown after patrol) -->
+  <div class="panel full-width" id="heatmap-section">
+    <div class="panel-header">Sensor Heatmap</div>
+    <div class="panel-body">
+      <div id="heatmap-container">
+        <img id="heatmap-img" src="/api/floor_plan" alt=""
+             onload="this.classList.add('loaded'); initHeatmapCanvas();">
+        <canvas id="heatmap-canvas"></canvas>
+      </div>
+      <div class="legend-bar">
+        <span>Safe</span>
+        <div class="legend-gradient"></div>
+        <span>Danger</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ---- State ----
+let ws = null;
+let mapMeta = null;
+let waypoints = [];
+let latestState = null;
+let floorPlanImg = null;
+let mapCanvasReady = false;
+
+// ---- Thresholds (persisted in localStorage) ----
+function loadThresholds() {
+  const saved = localStorage.getItem('go2_thresholds');
+  if (saved) {
+    try {
+      const t = JSON.parse(saved);
+      document.getElementById('thresh-safe').value = t.safe;
+      document.getElementById('thresh-warn').value = t.warn;
+    } catch(e) {}
+  }
+}
+function saveThresholds() {
+  const safe = parseFloat(document.getElementById('thresh-safe').value) || 300;
+  const warn = parseFloat(document.getElementById('thresh-warn').value) || 600;
+  document.getElementById('thresh-danger').value = warn;
+  localStorage.setItem('go2_thresholds', JSON.stringify({safe, warn}));
+}
+function getThresholds() {
+  return {
+    safe: parseFloat(document.getElementById('thresh-safe').value) || 300,
+    warn: parseFloat(document.getElementById('thresh-warn').value) || 600,
+  };
+}
+loadThresholds();
+
+// ---- Init: fetch map data ----
+async function init() {
+  try {
+    const [metaResp, wpResp] = await Promise.all([
+      fetch('/api/map_meta'),
+      fetch('/api/waypoints'),
+    ]);
+    if (metaResp.ok) mapMeta = await metaResp.json();
+    if (wpResp.ok) waypoints = await wpResp.json();
+  } catch(e) {
+    console.warn('Failed to load map data:', e);
+  }
+  connectWebSocket();
+}
+
+// ---- WebSocket ----
+function connectWebSocket() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+  ws.onopen = () => {
+    document.getElementById('status-badge').textContent = 'Connected';
+    document.getElementById('status-badge').style.background = '#27ae60';
+  };
+  ws.onclose = () => {
+    document.getElementById('status-badge').textContent = 'Disconnected';
+    document.getElementById('status-badge').style.background = '#c0392b';
+    setTimeout(connectWebSocket, 2000);
+  };
+  ws.onmessage = (evt) => {
+    const data = JSON.parse(evt.data);
+    if (data.type === 'state') {
+      latestState = data;
+      updateUI(data);
+    }
+  };
+}
+
+function sendCmd(cmd) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({cmd}));
+  }
+}
+
+// ---- UI Update ----
+function updateUI(s) {
+  // Status badge
+  const badge = document.getElementById('status-badge');
+  const stateLabels = {
+    idle: 'Idle', standing_up: 'Standing Up', navigating: 'Navigating',
+    collecting: 'Collecting', waiting: 'Waiting', done: 'Complete', error: 'Error',
+  };
+  const stateColors = {
+    idle: '#555', standing_up: '#f39c12', navigating: '#2980b9',
+    collecting: '#8e44ad', waiting: '#e67e22', done: '#27ae60', error: '#c0392b',
+  };
+  badge.textContent = stateLabels[s.nav_state] || s.nav_state;
+  badge.style.background = stateColors[s.nav_state] || '#555';
+
+  // Buttons
+  const isIdle = s.nav_state === 'idle' || s.nav_state === 'done' || s.nav_state === 'error';
+  document.getElementById('btn-start').disabled = !isIdle;
+  document.getElementById('btn-next').disabled = s.nav_state !== 'waiting';
+
+  // Position
+  document.getElementById('val-x').textContent = s.position.x.toFixed(3);
+  document.getElementById('val-y').textContent = s.position.y.toFixed(3);
+  document.getElementById('val-yaw').textContent = (s.position.yaw * 180 / Math.PI).toFixed(1) + '\u00b0';
+
+  // Sensor
+  const sensorDot = document.getElementById('sensor-dot');
+  sensorDot.className = 'conn-dot ' + (s.sensor_connected ? 'on' : 'off');
+  const sItem = document.getElementById('sensor-item');
+  const valSensor = document.getElementById('val-sensor');
+  if (s.sensor_value != null) {
+    valSensor.textContent = s.sensor_value.toFixed(1);
+    const t = getThresholds();
+    sItem.className = 'data-item ' + (
+      s.sensor_value < t.safe ? 'sensor-safe' :
+      s.sensor_value < t.warn ? 'sensor-warn' : 'sensor-danger'
+    );
+  } else {
+    valSensor.textContent = 'N/A';
+    sItem.className = 'data-item';
+  }
+
+  // Progress
+  const total = s.total_waypoints || 0;
+  const done = s.waypoint_statuses ? s.waypoint_statuses.filter(x => x === 'done').length : 0;
+  const pct = total > 0 ? (done / total * 100) : 0;
+  document.getElementById('progress-fill').style.width = pct + '%';
+  const progressText = document.getElementById('progress-text');
+  if (s.nav_state === 'idle') progressText.textContent = 'Waiting to start...';
+  else if (s.nav_state === 'done') progressText.textContent = `Complete! ${done}/${total} waypoints collected.`;
+  else if (s.nav_state === 'error') progressText.textContent = `Error: ${s.error}`;
+  else progressText.textContent = `Waypoint ${s.current_waypoint + 1} of ${total} (${done} collected)`;
+
+  // Waypoint table
+  updateWaypointTable(s);
+
+  // Map canvas
+  if (mapCanvasReady) drawMap(s);
+
+  // Heatmap
+  if (s.nav_state === 'done' && s.sensor_log && s.sensor_log.length > 0) {
+    document.getElementById('heatmap-section').style.display = 'block';
+    drawHeatmap(s.sensor_log);
+  }
+}
+
+function updateWaypointTable(s) {
+  const tbody = document.getElementById('wp-tbody');
+  const total = s.total_waypoints || waypoints.length;
+  if (total === 0 && tbody.children.length === 0) {
+    // Build initial table from loaded waypoints
+    if (waypoints.length > 0) {
+      let html = '';
+      for (let i = 0; i < waypoints.length; i++) {
+        const wp = waypoints[i];
+        html += `<tr class="wp-pending"><td>${i+1}</td><td>(${wp.x.toFixed(2)}, ${wp.y.toFixed(2)})</td><td>--</td><td>pending</td></tr>`;
+      }
+      tbody.innerHTML = html;
+    }
+    return;
+  }
+
+  // Rebuild from state
+  let html = '';
+  for (let i = 0; i < total; i++) {
+    const status = (s.waypoint_statuses && s.waypoint_statuses[i]) || 'pending';
+    const wp = waypoints[i] || {x: 0, y: 0};
+    const logEntry = s.sensor_log ? s.sensor_log.find(e => e.waypoint === i + 1) : null;
+    const sensorVal = logEntry && logEntry.sensor_value !== '' ? parseFloat(logEntry.sensor_value).toFixed(1) : '--';
+    html += `<tr class="wp-${status}"><td>${i+1}</td><td>(${wp.x.toFixed(2)}, ${wp.y.toFixed(2)})</td><td>${sensorVal}</td><td>${status}</td></tr>`;
+  }
+  tbody.innerHTML = html;
+}
+
+// ---- Map Canvas ----
+function initMapCanvas() {
+  const img = document.getElementById('floor-plan-img');
+  floorPlanImg = img;
+  const canvas = document.getElementById('map-canvas');
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  document.getElementById('map-no-data').style.display = 'none';
+  mapCanvasReady = true;
+  if (latestState) drawMap(latestState);
+}
+
+function worldToCanvas(wx, wy, canvas) {
+  if (!mapMeta) return null;
+  // map_meta gives us the grid coordinate system
+  // floor_plan.png is rendered by matplotlib with origin='lower' convention
+  // The PNG image has matplotlib axes/labels, so we use the grid dimensions
+  // We need to map world coords to the image pixel space
+  const img = floorPlanImg;
+  if (!img) return null;
+
+  // Grid pixel coords
+  const gx = (wx - mapMeta.origin_x) / mapMeta.resolution;
+  const gy = (wy - mapMeta.origin_y) / mapMeta.resolution;
+  // Flip Y (grid origin='lower' = bottom-left, canvas origin = top-left)
+  const gyFlipped = mapMeta.height - 1 - gy;
+
+  // The matplotlib PNG has padding for axes. We approximate the plot area.
+  // matplotlib default: left~12.5%, right~95%, bottom~10%, top~93% of figure
+  const plotLeft = 0.125 * img.naturalWidth;
+  const plotRight = 0.95 * img.naturalWidth;
+  const plotTop = 0.07 * img.naturalHeight;
+  const plotBottom = 0.90 * img.naturalHeight;
+  const plotW = plotRight - plotLeft;
+  const plotH = plotBottom - plotTop;
+
+  const cx = plotLeft + (gx / mapMeta.width) * plotW;
+  const cy = plotTop + (gyFlipped / mapMeta.height) * plotH;
+  return {x: cx, y: cy};
+}
+
+function drawMap(s) {
+  const canvas = document.getElementById('map-canvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (!mapMeta) return;
+
+  // Draw waypoint route path
+  if (waypoints.length > 1) {
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(52, 152, 219, 0.5)';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < waypoints.length; i++) {
+      const p = worldToCanvas(waypoints[i].x, waypoints[i].y, canvas);
+      if (!p) continue;
+      if (i === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    }
+    ctx.stroke();
+  }
+
+  // Draw waypoint markers
+  for (let i = 0; i < waypoints.length; i++) {
+    const wp = waypoints[i];
+    const p = worldToCanvas(wp.x, wp.y, canvas);
+    if (!p) continue;
+
+    const status = (s.waypoint_statuses && s.waypoint_statuses[i]) || 'pending';
+    const colors = {
+      pending: '#777', navigating: '#3498db', collecting: '#9b59b6',
+      waiting: '#e67e22', done: '#2ecc71',
+    };
+
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 8, 0, 2 * Math.PI);
+    ctx.fillStyle = colors[status] || '#777';
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Number label
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 9px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(i + 1, p.x, p.y);
+  }
+
+  // Draw robot position
+  const rp = worldToCanvas(s.position.x, s.position.y, canvas);
+  if (rp) {
+    const yaw = s.position.yaw;
+    const size = 12;
+    ctx.save();
+    ctx.translate(rp.x, rp.y);
+    // Note: canvas Y is flipped relative to world Y, so negate yaw for display
+    ctx.rotate(-yaw);
+    ctx.beginPath();
+    ctx.moveTo(size, 0);
+    ctx.lineTo(-size * 0.6, -size * 0.5);
+    ctx.lineTo(-size * 0.6, size * 0.5);
+    ctx.closePath();
+
+    const robotColors = {
+      idle: '#95a5a6', navigating: '#2ecc71', collecting: '#f39c12',
+      waiting: '#e67e22', done: '#27ae60', error: '#e74c3c', standing_up: '#f39c12',
+    };
+    ctx.fillStyle = robotColors[s.nav_state] || '#2ecc71';
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// ---- Heatmap ----
+let heatmapCanvasReady = false;
+let heatmapFloorImg = null;
+
+function initHeatmapCanvas() {
+  const img = document.getElementById('heatmap-img');
+  heatmapFloorImg = img;
+  const canvas = document.getElementById('heatmap-canvas');
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  heatmapCanvasReady = true;
+  if (latestState && latestState.sensor_log) drawHeatmap(latestState.sensor_log);
+}
+
+function sensorToColor(value, vmin, vmax) {
+  let t = (vmax === vmin) ? 0.5 : (value - vmin) / (vmax - vmin);
+  t = Math.max(0, Math.min(1, t));
+  const thresh = getThresholds();
+  const tSafe = (vmax === vmin) ? 0.33 : (thresh.safe - vmin) / (vmax - vmin);
+  const tWarn = (vmax === vmin) ? 0.66 : (thresh.warn - vmin) / (vmax - vmin);
+
+  // Green -> Yellow -> Red
+  let r, g, b;
+  if (t < 0.5) {
+    r = Math.round(t * 2 * 255);
+    g = Math.round(255 - t * 0.5 * 255);
+    b = Math.round((1 - t * 2) * 100);
+  } else {
+    r = 255;
+    g = Math.round((1 - (t - 0.5) * 2) * 200);
+    b = 0;
+  }
+  return `rgb(${r},${g},${b})`;
+}
+
+function drawHeatmap(sensorLog) {
+  if (!heatmapCanvasReady || !mapMeta) return;
+  const canvas = document.getElementById('heatmap-canvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const values = sensorLog.filter(e => e.sensor_value !== '').map(e => parseFloat(e.sensor_value));
+  if (values.length === 0) return;
+  const vmin = Math.min(...values);
+  const vmax = Math.max(...values);
+
+  // Draw route path
+  if (waypoints.length > 1) {
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    for (let i = 0; i < waypoints.length; i++) {
+      const p = heatmapWorldToCanvas(waypoints[i].x, waypoints[i].y);
+      if (!p) continue;
+      if (i === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Draw sensor dots
+  for (const entry of sensorLog) {
+    if (entry.sensor_value === '') continue;
+    const wp = waypoints[entry.waypoint - 1];
+    if (!wp) continue;
+    const p = heatmapWorldToCanvas(wp.x, wp.y);
+    if (!p) continue;
+    const val = parseFloat(entry.sensor_value);
+    const color = sensorToColor(val, vmin, vmax);
+
+    // Outer glow
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 18, 0, 2 * Math.PI);
+    ctx.fillStyle = color.replace('rgb', 'rgba').replace(')', ',0.25)');
+    ctx.fill();
+
+    // Main dot
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 10, 0, 2 * Math.PI);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Value label
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 9px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(val.toFixed(0), p.x, p.y);
+  }
+}
+
+function heatmapWorldToCanvas(wx, wy) {
+  if (!mapMeta || !heatmapFloorImg) return null;
+  const img = heatmapFloorImg;
+  const gx = (wx - mapMeta.origin_x) / mapMeta.resolution;
+  const gy = (wy - mapMeta.origin_y) / mapMeta.resolution;
+  const gyFlipped = mapMeta.height - 1 - gy;
+  const plotLeft = 0.125 * img.naturalWidth;
+  const plotRight = 0.95 * img.naturalWidth;
+  const plotTop = 0.07 * img.naturalHeight;
+  const plotBottom = 0.90 * img.naturalHeight;
+  const plotW = plotRight - plotLeft;
+  const plotH = plotBottom - plotTop;
+  return {
+    x: plotLeft + (gx / mapMeta.width) * plotW,
+    y: plotTop + (gyFlipped / mapMeta.height) * plotH,
+  };
+}
+
+// ---- Init ----
+init();
+</script>
+</body>
+</html>
