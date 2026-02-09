@@ -37,3 +37,11 @@ __pycache__
 
 # python
 dist/
+
+# Patrol system data (large files - see README for download link)
+patrol_system/data/*.ply
+patrol_system/data/*.ply.bak
+patrol_system/data/*.npy
+patrol_system/data/*.npy.bak
+patrol_system/data/*.bak
+patrol_system/data/*.png
