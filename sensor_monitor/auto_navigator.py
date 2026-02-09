@@ -6,6 +6,8 @@ through the monitoring route, collecting sensor data at each waypoint.
 
 Usage:
     python sensor_monitor/auto_navigator.py
+    python sensor_monitor/auto_navigator.py --web          # Launch web UI
+    python sensor_monitor/auto_navigator.py --web --web-port 8080
 
 Prerequisites:
     - waypoints.json in sensor_monitor/data/ (from route_recorder.py)
@@ -49,6 +51,19 @@ class AutoNavigator:
 
         # Sensor data log
         self.sensor_log = []
+
+        # Navigation state (for web mode)
+        self.nav_state = "idle"          # idle|standing_up|navigating|collecting|waiting|done|error
+        self.current_waypoint_idx = 0    # 0-based index into waypoints_adjusted
+        self.total_waypoints = 0
+        self.waypoints_adjusted = []     # populated by prepare_patrol()
+        self.waypoint_statuses = []      # per-waypoint status strings
+        self.patrol_error = ""
+
+        # Web mode synchronization
+        self._continue_event = threading.Event()
+        self._stop_event = threading.Event()
+        self._web_mode = False
 
         # Subscribe to state
         self.sub = ChannelSubscriber("rt/sportmodestate", SportModeState_)
@@ -146,6 +161,10 @@ class AutoNavigator:
         x, y, _ = self.get_position()
         return math.atan2(target_y - y, target_x - x)
 
+    def _is_stopped(self):
+        """Check if emergency stop was requested."""
+        return self._stop_event.is_set()
+
     def rotate_to_target(self, target_x, target_y, tolerance=0.25, timeout=30.0):
         """Rotate to face target point using SportClient.Move."""
         print("  Rotating to face target...")
@@ -159,6 +178,10 @@ class AutoNavigator:
         last_yaw_error = None
 
         while True:
+            if self._is_stopped():
+                self.sport_client.StopMove()
+                return
+
             _, _, yaw = self.get_position()
             yaw_error = self.normalize_angle(target_yaw - yaw)
 
@@ -205,6 +228,10 @@ class AutoNavigator:
         stuck_counter = 0
 
         while self.distance_to(target_x, target_y) > tolerance:
+            if self._is_stopped():
+                self.sport_client.StopMove()
+                return
+
             x, y, yaw = self.get_position()
             distance = self.distance_to(target_x, target_y)
 
@@ -255,8 +282,11 @@ class AutoNavigator:
             return
 
         self.rotate_to_target(target_x, target_y)
+        if self._is_stopped():
+            return
         self.move_forward_to_target(target_x, target_y, tolerance)
-        print("  Arrived!")
+        if not self._is_stopped():
+            print("  Arrived!")
 
     def read_sensor(self):
         """Read the latest sensor value. Returns float or None if unavailable."""
@@ -320,8 +350,169 @@ class AutoNavigator:
         print(f"Loaded {len(waypoints)} waypoints from {wp_path}")
         return waypoints
 
+    # ------------------------------------------------------------------
+    # Web-mode control methods
+    # ------------------------------------------------------------------
+
+    def web_continue(self):
+        """Signal navigation to proceed to next waypoint (replaces Enter key)."""
+        self._continue_event.set()
+
+    def web_emergency_stop(self):
+        """Emergency stop: halt movement immediately."""
+        self._stop_event.set()
+        self.sport_client.StopMove()
+        self.nav_state = "idle"
+
+    def get_state_snapshot(self):
+        """Return current state as a dict for WebSocket broadcast."""
+        return {
+            "nav_state": self.nav_state,
+            "position": {
+                "x": round(self.current_x, 4),
+                "y": round(self.current_y, 4),
+                "yaw": round(self.current_yaw, 4),
+            },
+            "current_waypoint": self.current_waypoint_idx,
+            "total_waypoints": self.total_waypoints,
+            "waypoint_statuses": list(self.waypoint_statuses),
+            "sensor_value": self.latest_sensor_value,
+            "sensor_connected": self.sensor_connected,
+            "sensor_log": list(self.sensor_log),
+            "error": self.patrol_error,
+        }
+
+    # ------------------------------------------------------------------
+    # Patrol logic (factored for both CLI and web mode)
+    # ------------------------------------------------------------------
+
+    def prepare_patrol(self):
+        """Load waypoints, apply rigid-body transform. Returns True on success."""
+        waypoints = self.load_waypoints()
+        if waypoints is None or len(waypoints) == 0:
+            self.patrol_error = "No waypoints found"
+            return False
+
+        self.total_waypoints = len(waypoints)
+        self.waypoint_statuses = ["pending"] * len(waypoints)
+        self.sensor_log = []
+        self.patrol_error = ""
+
+        # Stand up
+        self.nav_state = "standing_up"
+        print("\nStanding up...")
+        self.sport_client.StandUp()
+        time.sleep(3)
+
+        if self._is_stopped():
+            return False
+
+        # Enable FreeWalk mode
+        print("Activating FreeWalk...")
+        self.sport_client.FreeWalk()
+        time.sleep(1)
+
+        if self._is_stopped():
+            return False
+
+        start_x, start_y, start_yaw = self.get_position()
+        print(f"\nStart position: ({start_x:.3f}, {start_y:.3f}), yaw={math.degrees(start_yaw):.1f}")
+
+        # Rigid-body transform to current pose
+        base_x, base_y = waypoints[0][0], waypoints[0][1]
+        base_yaw = waypoints[0][2]
+        yaw_offset = self.normalize_angle(start_yaw - base_yaw)
+        cos_a = math.cos(yaw_offset)
+        sin_a = math.sin(yaw_offset)
+
+        adjusted = []
+        for wx, wy, wyaw in waypoints:
+            dx = wx - base_x
+            dy = wy - base_y
+            new_x = start_x + dx * cos_a - dy * sin_a
+            new_y = start_y + dx * sin_a + dy * cos_a
+            adjusted.append((new_x, new_y, self.normalize_angle(wyaw + yaw_offset)))
+
+        self.waypoints_adjusted = adjusted
+        print(f"\nAdjusted waypoints: yaw_offset={math.degrees(yaw_offset):+.1f}deg")
+        return True
+
+    def start_patrol(self):
+        """Run the waypoint iteration loop. In web mode, waits for continue signal."""
+        waypoints = self.waypoints_adjusted
+
+        try:
+            for i, wp in enumerate(waypoints):
+                if self._is_stopped():
+                    break
+
+                target_x, target_y = wp[0], wp[1]
+                self.current_waypoint_idx = i
+                self.nav_state = "navigating"
+                self.waypoint_statuses[i] = "navigating"
+                print(f"\n>>> Waypoint {i+1}/{len(waypoints)}: ({target_x:.3f}, {target_y:.3f})")
+
+                self.move_to_point(target_x, target_y)
+
+                if self._is_stopped():
+                    break
+
+                # Log sensor data
+                self.nav_state = "collecting"
+                self.waypoint_statuses[i] = "collecting"
+                time.sleep(1)
+                self.log_data_point(i + 1)
+
+                if self._is_stopped():
+                    break
+
+                self.waypoint_statuses[i] = "done"
+
+                # Wait for user (web mode: wait for continue event; CLI: input())
+                if i < len(waypoints) - 1:
+                    if self._web_mode:
+                        self.nav_state = "waiting"
+                        print(f"    Waiting for user to continue...")
+                        self._continue_event.clear()
+                        # Wait with periodic stop-event checks
+                        while not self._continue_event.wait(timeout=0.2):
+                            if self._is_stopped():
+                                break
+                        if self._is_stopped():
+                            break
+
+            if not self._is_stopped():
+                self.nav_state = "done"
+                print(f"\n>>> Patrol complete!")
+
+        except Exception as e:
+            self.nav_state = "error"
+            self.patrol_error = str(e)
+            print(f"\nPatrol error: {e}")
+
+        finally:
+            print("\nStopping...")
+            self.sport_client.StopMove()
+            time.sleep(1)
+
+            print("Recovery stand...")
+            self.sport_client.RecoveryStand()
+            time.sleep(1)
+
+            print("Standing down...")
+            self.sport_client.StandDown()
+
+            print("\nSaving sensor data...")
+            self.save_sensor_data()
+
+            if self._is_stopped():
+                self.nav_state = "idle"
+                self._stop_event.clear()
+
+            print("Done!")
+
     def run_patrol(self, loop=False, wait_for_enter=False):
-        """Execute monitoring route."""
+        """Execute monitoring route (CLI mode entry point)."""
         waypoints = self.load_waypoints()
         if waypoints is None or len(waypoints) == 0:
             return
@@ -432,9 +623,18 @@ if __name__ == "__main__":
                         help="Sensor bridge TCP host (default: 192.168.123.18)")
     parser.add_argument("--sensor-port", type=int, default=9876,
                         help="Sensor bridge TCP port (default: 9876)")
+    parser.add_argument("--web", action="store_true",
+                        help="Launch web UI instead of CLI mode")
+    parser.add_argument("--web-port", type=int, default=8080,
+                        help="Web server port (default: 8080)")
     args = parser.parse_args()
 
     nav = AutoNavigator(args.interface,
                           sensor_host=args.sensor_host,
                           sensor_port=args.sensor_port)
-    nav.run_patrol(loop=args.loop, wait_for_enter=args.wait)
+
+    if args.web:
+        from web_server import run_web_server
+        run_web_server(nav, port=args.web_port)
+    else:
+        nav.run_patrol(loop=args.loop, wait_for_enter=args.wait)

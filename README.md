@@ -12,6 +12,9 @@ Autonomous environmental sensor monitoring using the Unitree Go2 quadruped robot
 1. Map            2. Record Route     3. Auto-Navigate       4. Visualize
 lidar_mapper.py → route_recorder.py → auto_navigator.py   → sensor_heatmap.py
 (walk + scan)     (walk + mark)       (autonomous + log)     (3D/2D heatmap)
+                                      ↓
+                                      auto_navigator.py --web
+                                      (web UI + live camera)
 ```
 
 **Sensor data flow** (optional external sensor):
@@ -132,7 +135,7 @@ python sensor_monitor/sensor_heatmap.py --cloud-only
 
 The red spheres and line should overlay the point cloud correctly. If waypoints appear outside the map, re-record both in the same boot session.
 
-### 4. Run autonomous monitoring
+### 4a. Run autonomous monitoring (CLI)
 
 Place the robot on the taped starting mark (same position + heading as mapping), then:
 
@@ -146,6 +149,31 @@ python sensor_monitor/auto_navigator.py --sensor-host 192.168.123.18
 # Loop continuously
 python sensor_monitor/auto_navigator.py --loop
 ```
+
+### 4b. Run autonomous monitoring (Web UI)
+
+Place the robot on the taped starting mark, then launch the web interface:
+
+```bash
+# Start web server (opens at http://localhost:8080)
+python sensor_monitor/auto_navigator.py --web
+
+# With sensor bridge
+python sensor_monitor/auto_navigator.py --web --sensor-host 192.168.123.18
+
+# Custom port
+python sensor_monitor/auto_navigator.py --web --web-port 9090
+```
+
+Open `http://localhost:8080` in your browser. The web UI provides:
+
+- **Live floor plan** with robot position and waypoint status
+- **Live camera** stream from the robot's front camera
+- **Start Patrol** button to begin autonomous navigation
+- **Next Point** button to advance to the next waypoint after data collection
+- **Emergency Stop** to halt the robot immediately
+- **Live sensor data** with user-configurable safe/warning/danger thresholds
+- **Heatmap** automatically displayed after all waypoints are collected
 
 ### 5. Visualize results
 
@@ -166,8 +194,10 @@ python sensor_monitor/sensor_heatmap.py --mode 2d
 | `lidar_mapper.py` | Walk robot to build 3D LiDAR point cloud + 2D floor plan | PC |
 | `route_recorder.py` | Walk robot, press Enter to mark monitoring waypoints | PC |
 | `auto_navigator.py` | Auto-navigate waypoints, collect sensor data at each stop | PC |
+| `auto_navigator.py --web` | Web UI with live map, camera, controls, and heatmap | PC |
 | `sensor_heatmap.py` | Visualize sensor readings on 3D point cloud + 2D floor plan | PC |
 | `sensor_bridge.py` | Arduino serial to TCP bridge (stdlib only, no pip needed) | Jetson |
+| `web_server.py` | FastAPI backend for web UI (used internally by `--web` flag) | PC |
 
 All scripts are in `sensor_monitor/` and write data to `sensor_monitor/data/`.
 
