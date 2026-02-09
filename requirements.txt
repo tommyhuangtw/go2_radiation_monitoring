@@ -1,0 +1,5 @@
+numpy
+matplotlib
+open3d
+cyclonedds==0.10.2
+opencv-python

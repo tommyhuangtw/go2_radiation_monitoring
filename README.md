@@ -1,113 +1,201 @@
-# unitree_sdk2_python
-Python interface for unitree sdk2
+# Go2 Radiation Monitoring System
 
-# Installation
-## Dependencies
-- Python >= 3.8
-- cyclonedds == 0.10.2
-- numpy
-- opencv-python
+Autonomous environmental sensor monitoring using the Unitree Go2 quadruped robot. The robot builds a 3D LiDAR map of an environment, learns a monitoring route via manual walk-through, then autonomously navigates the route while collecting sensor data at each waypoint. Results are visualized as 2D/3D heatmaps overlaid on the LiDAR map.
 
-### Installing from source
-Execute the following commands in the terminal:
-```bash
-cd ~
-sudo apt install python3-pip
-git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
-cd unitree_sdk2_python
-pip3 install -e .
+![LiDAR floor plan with numbered monitoring waypoints](docs/images/floor_plan.png)
+
+## System Architecture
+
+**Workflow** (teach-and-repeat):
+
 ```
-## FAQ
-##### 1. Error when `pip3 install -e .`:
+1. Map            2. Record Route     3. Auto-Navigate       4. Visualize
+lidar_mapper.py → route_recorder.py → auto_navigator.py   → sensor_heatmap.py
+(walk + scan)     (walk + mark)       (autonomous + log)     (3D/2D heatmap)
+```
+
+**Sensor data flow** (optional external sensor):
+
+```
+Arduino (serial) → sensor_bridge.py (Jetson) → TCP → auto_navigator.py (PC)
+```
+
+## Prerequisites
+
+### Hardware
+- Unitree Go2 with L1 LiDAR
+- PC with Ethernet connection to robot (default interface: `enp0s2`)
+- (Optional) Arduino sensor board connected to Go2's Jetson via USB
+
+### Software
+- Python 3.10 with conda (required — cyclonedds does not support Python > 3.10)
+- Unitree SDK2 Python (included in this repo as `unitree_sdk2py/`)
+
+## Installation
+
+### SDK setup
+
 ```bash
+git clone git@github.com:tommyhuangtw/go2_radiation_monitoring.git
+cd go2_radiation_monitoring
+
+# Create conda env (cyclonedds requires Python ≤ 3.10)
+conda create -n go2 python=3.10 -y
+conda activate go2
+
+# Install SDK + dependencies
+pip install -r requirements.txt
+pip install -e .
+```
+
+### Troubleshooting: cyclonedds
+
+If `pip install -e .` fails with:
+
+```
 Could not locate cyclonedds. Try to set CYCLONEDDS_HOME or CMAKE_PREFIX_PATH
 ```
-This error mentions that the cyclonedds path could not be found. First compile and install cyclonedds:
+
+Build cyclonedds from source first:
 
 ```bash
 cd ~
-git clone https://github.com/eclipse-cyclonedds/cyclonedds -b releases/0.10.x 
+git clone https://github.com/eclipse-cyclonedds/cyclonedds -b releases/0.10.x
 cd cyclonedds && mkdir build install && cd build
 cmake .. -DCMAKE_INSTALL_PREFIX=../install
 cmake --build . --target install
 ```
-Enter the unitree_sdk2_python directory, set `CYCLONEDDS_HOME` to the path of the cyclonedds you just compiled, and then install unitree_sdk2_python.
+
+Then re-install with the path set:
+
 ```bash
-cd ~/unitree_sdk2_python
+cd ~/go2_radiation_monitoring
 export CYCLONEDDS_HOME="~/cyclonedds/install"
-pip3 install -e .
+pip install -e .
 ```
-For details, see: https://pypi.org/project/cyclonedds/#installing-with-pre-built-binaries
 
-# Usage
-The Python sdk2 interface maintains consistency with the unitree_sdk2 interface, achieving robot status acquisition and control through request-response or topic subscription/publishing. Example programs are located in the `/example` directory. Before running the examples, configure the robot's network connection as per the instructions in the document at https://support.unitree.com/home/en/developer/Quick_start.
-## DDS Communication
-In the terminal, execute:
-```bash
-python3 ./example/helloworld/publisher.py
-```
-Open a new terminal and execute:
-```bash
-python3 ./example/helloworld/subscriber.py
-```
-You will see the data output in the terminal. The data structure transmitted between `publisher.py` and `subscriber.py` is defined in `user_data.py`, and users can define the required data structure as needed.
-## High-Level Status and Control
-The high-level interface maintains consistency with unitree_sdk2 in terms of data structure and control methods. For detailed information, refer to https://support.unitree.com/home/en/developer/sports_services.
-### High-Level Status
-Execute the following command in the terminal:
-```bash
-python3 ./example/high_level/read_highstate.py enp2s0
-```
-Replace `enp2s0` with the name of the network interface to which the robot is connected,.
-### High-Level Control
-Execute the following command in the terminal:
-```bash
-python3 ./example/high_level/sportmode_test.py enp2s0
-```
-Replace `enp2s0` with the name of the network interface to which the robot is connected. This example program provides several test methods, and you can choose the required tests as follows:
-```python
-test.StandUpDown() # Stand up and lie down
-# test.VelocityMove() # Velocity control
-# test.BalanceAttitude() # Attitude control
-# test.TrajectoryFollow() # Trajectory tracking
-# test.SpecialMotions() # Special motions
-```
-## Low-Level Status and Control
-The low-level interface maintains consistency with unitree_sdk2 in terms of data structure and control methods. For detailed information, refer to https://support.unitree.com/home/en/developer/Basic_services.
-### Low-Level Status
-Execute the following command in the terminal:
-```bash
-python3 ./example/low_level/lowlevel_control.py enp2s0
-```
-Replace `enp2s0` with the name of the network interface to which the robot is connected. The program will output the state of the right front leg hip joint, IMU, and battery voltage.
-### Low-Level Motor Control
-First, use the app to turn off the high-level motion service (sport_mode) to prevent conflicting instructions.
-Execute the following command in the terminal:
-```bash
-python3 ./example/low_level/lowlevel_control.py enp2s0
-```
-Replace `enp2s0` with the name of the network interface to which the robot is connected. The left hind leg hip joint will maintain a 0-degree position (for safety, set kp=10, kd=1), and the left hind leg calf joint will continuously output 1Nm of torque.
-## Wireless Controller Status
-Execute the following command in the terminal:
-```bash
-python3 ./example/wireless_controller/wireless_controller.py enp2s0
-```
-Replace `enp2s0` with the name of the network interface to which the robot is connected. The terminal will output the status of each key. For the definition and data structure of the remote control keys, refer to https://support.unitree.com/home/en/developer/Get_remote_control_status.
-## Front Camera
-Use OpenCV to obtain the front camera (ensure to run on a system with a graphical interface, and press ESC to exit the program):
-```bash
-python3 ./example/front_camera/camera_opencv.py enp2s0
-```
-Replace `enp2s0` with the name of the network interface to which the robot is connected.
+See [cyclonedds PyPI docs](https://pypi.org/project/cyclonedds/#installing-with-pre-built-binaries) for details.
 
-## Obstacle Avoidance Switch
-```bash
-python3 ./example/obstacles_avoid_switch/obstacles_avoid_switch.py enp2s0
-```
-Replace `enp2s0` with the name of the network interface to which the robot is connected. The robot will cycle obstacle avoidance on and off. For details on the obstacle avoidance service, see https://support.unitree.com/home/en/developer/ObstaclesAvoidClient
+### Sensor bridge deployment
 
-## Light and volume control
+If using an external Arduino sensor connected to the Go2's Jetson:
+
 ```bash
-python3 ./example/vui_client/vui_client_example.py enp2s0
+# Copy bridge script to Jetson
+scp sensor_monitor/sensor_bridge.py unitree@192.168.123.18:~/
+
+# SSH in and add user to dialout group (one-time)
+ssh unitree@192.168.123.18
+sudo usermod -aG dialout unitree
+# Log out and back in for group change to take effect
 ```
-Replace `enp2s0` with the name of the network interface to which the robot is connected.T he robot will cycle the volume and light brightness. The interface is detailed at https://support.unitree.com/home/en/developer/VuiClient
+
+## Quick Start
+
+> **Important — shared origin:** The robot's odometry resets to (0, 0, 0) on
+> every boot. All three scripts (mapping, route recording, auto-navigation)
+> must use the **same physical starting position and heading**. Mark the spot
+> and direction with tape before you begin. If you reboot between steps,
+> re-place the robot on the mark facing the same way.
+
+### 1. Build the LiDAR map
+
+Place the robot on the taped starting mark (see above). Walk it slowly through the environment while the script records 3D point cloud data.
+
+```bash
+python sensor_monitor/lidar_mapper.py
+```
+
+The script continuously accumulates LiDAR scans into memory at 5 Hz (configurable
+via `--throttle`). Just walk the robot around — no button presses needed during
+mapping. Press `[q]` or Ctrl+C when done; the point cloud auto-saves on exit.
+
+Generates `sensor_monitor/data/point_cloud.ply` and `sensor_monitor/data/floor_plan.png`.
+
+### 2. Record monitoring waypoints
+
+**Same boot session, same starting position.** Walk the robot to each monitoring location and press Enter to mark it.
+
+```bash
+python sensor_monitor/route_recorder.py
+```
+
+Press `[q]` to save and quit. Generates `sensor_monitor/data/waypoints.json`.
+
+### 3. Verify alignment
+
+Check that waypoints align with the LiDAR map:
+
+```bash
+python sensor_monitor/sensor_heatmap.py --cloud-only
+```
+
+The red spheres and line should overlay the point cloud correctly. If waypoints appear outside the map, re-record both in the same boot session.
+
+### 4. Run autonomous monitoring
+
+Place the robot on the taped starting mark (same position + heading as mapping), then:
+
+```bash
+# Without external sensor (positions only)
+python sensor_monitor/auto_navigator.py
+
+# With sensor bridge running on Jetson
+python sensor_monitor/auto_navigator.py --sensor-host 192.168.123.18
+
+# Loop continuously
+python sensor_monitor/auto_navigator.py --loop
+```
+
+### 5. Visualize results
+
+```bash
+# Both 3D + 2D
+python sensor_monitor/sensor_heatmap.py
+
+# 2D heatmap only
+python sensor_monitor/sensor_heatmap.py --mode 2d
+```
+
+![2D sensor heatmap overlaid on floor plan](docs/images/sensor_heatmap_2d.png)
+
+## Script Reference
+
+| Script | Purpose | Run on |
+|--------|---------|--------|
+| `lidar_mapper.py` | Walk robot to build 3D LiDAR point cloud + 2D floor plan | PC |
+| `route_recorder.py` | Walk robot, press Enter to mark monitoring waypoints | PC |
+| `auto_navigator.py` | Auto-navigate waypoints, collect sensor data at each stop | PC |
+| `sensor_heatmap.py` | Visualize sensor readings on 3D point cloud + 2D floor plan | PC |
+| `sensor_bridge.py` | Arduino serial to TCP bridge (stdlib only, no pip needed) | Jetson |
+
+All scripts are in `sensor_monitor/` and write data to `sensor_monitor/data/`.
+
+## Data Files
+
+| File | Generated by | Description |
+|------|-------------|-------------|
+| `point_cloud.ply` | lidar_mapper.py | 3D point cloud (PLY format) |
+| `floor_plan.png` | lidar_mapper.py | 2D top-down occupancy image |
+| `floor_plan.npy` | lidar_mapper.py | Raw 2D occupancy grid (numpy) |
+| `map_meta.json` | lidar_mapper.py | Grid metadata (resolution, origin, size) |
+| `waypoints.json` | route_recorder.py | Monitoring waypoints (x, y, yaw) |
+| `sensor_data.csv` | auto_navigator.py | Timestamped position + sensor readings |
+
+Data files are large and excluded from git via `.gitignore`.
+
+## Important Notes
+
+- **Shared origin**: All scripts share one odometry frame anchored at the robot's boot-up position. Steps 1-2 (mapping + waypoint recording) must happen in the same boot session. Step 4 (auto-navigation) can be a later session, but the robot must start at the same taped position and heading. The navigator applies a small rigid-body correction, but large offsets will cause navigation errors.
+- **Network interface**: All scripts default to `enp0s2`. Use `--interface` to change.
+
+## Known Limitations
+
+- Robot odometry drifts over long routes (no loop closure)
+- No obstacle avoidance during autonomous navigation (uses `SportClient.Move`)
+- Sensor bridge supports one TCP client at a time
+- 3D visualization requires a display (X11/Wayland) — use `--mode 2d` over SSH
+
+## Upstream SDK
+
+This project is built on top of [`unitree_sdk2_python`](https://github.com/unitreerobotics/unitree_sdk2_python). The `unitree_sdk2py/` directory is the unmodified upstream SDK. See the upstream repo for SDK documentation, DDS setup, and low-level API examples.

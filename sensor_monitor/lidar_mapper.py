@@ -7,9 +7,9 @@ from LiDAR data. Generates a point cloud (PLY) and 2D floor plan.
 For waypoint recording, use route_recorder.py separately.
 
 Usage:
-    python patrol_system/lidar_mapper.py
-    python patrol_system/lidar_mapper.py --throttle 10 --downsample 2
-    python patrol_system/lidar_mapper.py --interface enp0s2
+    python sensor_monitor/lidar_mapper.py
+    python sensor_monitor/lidar_mapper.py --throttle 10 --downsample 2
+    python sensor_monitor/lidar_mapper.py --interface enp0s2
 
 Controls:
     [Enter] - Toggle mapping on/off (pause/resume)
@@ -45,7 +45,7 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
 
 class LidarMapper:
-    def __init__(self, network_interface="enp0s2", throttle_hz=10, downsample=2):
+    def __init__(self, network_interface="enp0s2", throttle_hz=5, downsample=2):
         ChannelFactoryInitialize(0, network_interface)
 
         # Position tracking (for display)
@@ -278,7 +278,7 @@ class LidarMapper:
                 if wp_data:
                     wx = [wp["x"] for wp in wp_data]
                     wy = [wp["y"] for wp in wp_data]
-                    ax.plot(wx, wy, 'r-o', markersize=8, linewidth=2, label='Patrol route')
+                    ax.plot(wx, wy, 'r-o', markersize=8, linewidth=2, label='Monitoring route')
                     for i, wp in enumerate(wp_data):
                         ax.annotate(f'{i+1}', (wp["x"], wp["y"]), fontsize=10,
                                     fontweight='bold', color='red',
@@ -408,7 +408,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="LiDAR Mapper - Build 3D point cloud maps")
     parser.add_argument("--interface", default="enp0s2", help="Network interface (default: enp0s2)")
-    parser.add_argument("--throttle", type=float, default=10.0, help="LiDAR processing rate in Hz (default: 10)")
+    parser.add_argument("--throttle", type=float, default=5.0, help="LiDAR processing rate in Hz (default: 5)")
     parser.add_argument("--downsample", type=int, default=2, help="Keep every Nth point (default: 2)")
     parser.add_argument("--resolution", type=float, default=0.05, help="Floor plan resolution m/pixel (default: 0.05)")
     parser.add_argument("--z-min", type=float, default=0.1, help="Floor plan min height in meters (default: 0.1)")

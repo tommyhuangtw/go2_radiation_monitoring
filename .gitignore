@@ -19,6 +19,9 @@ Thumbs.db
 *.jpg
 *.png
 
+# Allow documentation images
+!docs/images/*.png
+
 # VS Code
 .vscode
 
@@ -38,10 +41,11 @@ __pycache__
 # python
 dist/
 
-# Patrol system data (large files - see README for download link)
-patrol_system/data/*.ply
-patrol_system/data/*.ply.bak
-patrol_system/data/*.npy
-patrol_system/data/*.npy.bak
-patrol_system/data/*.bak
-patrol_system/data/*.png
+# Sensor monitor data (large files - see README for download link)
+sensor_monitor/data/*.ply
+sensor_monitor/data/*.ply.bak
+sensor_monitor/data/*.npy
+sensor_monitor/data/*.npy.bak
+sensor_monitor/data/*.bak
+sensor_monitor/data/*.png
+sensor_monitor/data/*.csv

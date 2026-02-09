@@ -1,14 +1,14 @@
 """
-Patrol Navigator with Sensor Logging (Step 2)
+Auto Navigator with Sensor Logging (Step 2)
 
 Loads waypoints from route_recorder.py output and auto-navigates the robot
-through the patrol route, collecting sensor data at each waypoint.
+through the monitoring route, collecting sensor data at each waypoint.
 
 Usage:
-    python patrol_system/patrol_navigator.py
+    python sensor_monitor/auto_navigator.py
 
 Prerequisites:
-    - waypoints.json in patrol_system/data/ (from route_recorder.py)
+    - waypoints.json in sensor_monitor/data/ (from route_recorder.py)
     - Robot placed at the same starting position as during recording
     - (Optional) sensor_bridge.py running on Jetson for sensor data
 """
@@ -31,7 +31,7 @@ from unitree_sdk2py.idl.unitree_go.msg.dds_ import SportModeState_
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
 
-class PatrolNavigator:
+class AutoNavigator:
     def __init__(self, network_interface="enp0s2",
                  sensor_host="192.168.123.18", sensor_port=9876):
         ChannelFactoryInitialize(0, network_interface)
@@ -47,8 +47,8 @@ class PatrolNavigator:
         self.latest_sensor_ts = 0.0
         self.sensor_connected = False
 
-        # Patrol data log
-        self.patrol_log = []
+        # Sensor data log
+        self.sensor_log = []
 
         # Subscribe to state
         self.sub = ChannelSubscriber("rt/sportmodestate", SportModeState_)
@@ -280,27 +280,27 @@ class PatrolNavigator:
             "yaw": round(yaw, 4),
             "sensor_value": val if val is not None else "",
         }
-        self.patrol_log.append(entry)
+        self.sensor_log.append(entry)
 
         v_str = f"{val}" if val is not None else "N/A"
         print(f"    Logged: pos=({x:.3f}, {y:.3f}), sensor={v_str}")
 
-    def save_patrol_data(self):
-        """Save patrol log to CSV."""
-        if not self.patrol_log:
-            print("No patrol data to save.")
+    def save_sensor_data(self):
+        """Save sensor log to CSV."""
+        if not self.sensor_log:
+            print("No sensor data to save.")
             return
 
         os.makedirs(DATA_DIR, exist_ok=True)
-        csv_path = os.path.join(DATA_DIR, "patrol_data.csv")
+        csv_path = os.path.join(DATA_DIR, "sensor_data.csv")
 
         fieldnames = ["timestamp", "waypoint", "x", "y", "z", "yaw", "sensor_value"]
         with open(csv_path, 'w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
-            writer.writerows(self.patrol_log)
+            writer.writerows(self.sensor_log)
 
-        print(f"Saved {len(self.patrol_log)} data points to {csv_path}")
+        print(f"Saved {len(self.sensor_log)} data points to {csv_path}")
 
     def load_waypoints(self):
         """Load waypoints from JSON file."""
@@ -321,13 +321,13 @@ class PatrolNavigator:
         return waypoints
 
     def run_patrol(self, loop=False, wait_for_enter=False):
-        """Execute patrol route."""
+        """Execute monitoring route."""
         waypoints = self.load_waypoints()
         if waypoints is None or len(waypoints) == 0:
             return
 
         print("\n" + "=" * 50)
-        print("Patrol Navigator")
+        print("Auto Navigator")
         print("=" * 50)
         print(f"Waypoints: {len(waypoints)}")
         print(f"Sensor: {'Connected' if self.sensor_connected else 'Not connected (values will be N/A)'}")
@@ -338,7 +338,7 @@ class PatrolNavigator:
         for i, wp in enumerate(waypoints):
             print(f"  #{i+1}: x={wp[0]:.3f}, y={wp[1]:.3f}, yaw={math.degrees(wp[2]):.1f}")
 
-        input("\nPress Enter to start patrol (robot will stand up and move)...")
+        input("\nPress Enter to start (robot will stand up and move)...")
 
         # Stand up
         print("\nStanding up...")
@@ -370,12 +370,12 @@ class PatrolNavigator:
         waypoints = adjusted
         print(f"\nAdjusted waypoints: yaw_offset={math.degrees(yaw_offset):+.1f}deg")
 
-        patrol_count = 0
+        run_count = 0
         try:
             while True:
-                patrol_count += 1
+                run_count += 1
                 print(f"\n{'='*50}")
-                print(f"PATROL RUN #{patrol_count}")
+                print(f"RUN #{run_count}")
                 print(f"{'='*50}")
 
                 for i, wp in enumerate(waypoints):
@@ -391,16 +391,16 @@ class PatrolNavigator:
                     if wait_for_enter and i < len(waypoints) - 1:
                         input("  Press Enter to continue to next waypoint...")
 
-                print(f"\n>>> Patrol run #{patrol_count} complete!")
+                print(f"\n>>> Run #{run_count} complete!")
 
                 if not loop:
                     break
 
-                print("\nStarting next patrol loop in 5 seconds... (Ctrl+C to stop)")
+                print("\nStarting next loop in 5 seconds... (Ctrl+C to stop)")
                 time.sleep(5)
 
         except KeyboardInterrupt:
-            print("\n\nPatrol interrupted!")
+            print("\n\nInterrupted!")
 
         finally:
             # Stop and clean up
@@ -416,16 +416,16 @@ class PatrolNavigator:
             self.sport_client.StandDown()
 
             # Save data
-            print("\nSaving patrol data...")
-            self.save_patrol_data()
+            print("\nSaving sensor data...")
+            self.save_sensor_data()
 
             print("Done!")
 
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Patrol Navigator")
-    parser.add_argument("--loop", action="store_true", help="Loop patrol continuously")
+    parser = argparse.ArgumentParser(description="Auto Navigator - autonomous sensor monitoring")
+    parser.add_argument("--loop", action="store_true", help="Loop route continuously")
     parser.add_argument("--wait", action="store_true", help="Wait for Enter between waypoints")
     parser.add_argument("--interface", default="enp0s2", help="Network interface")
     parser.add_argument("--sensor-host", default="192.168.123.18",
@@ -434,7 +434,7 @@ if __name__ == "__main__":
                         help="Sensor bridge TCP port (default: 9876)")
     args = parser.parse_args()
 
-    nav = PatrolNavigator(args.interface,
+    nav = AutoNavigator(args.interface,
                           sensor_host=args.sensor_host,
                           sensor_port=args.sensor_port)
     nav.run_patrol(loop=args.loop, wait_for_enter=args.wait)

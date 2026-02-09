@@ -1,11 +1,11 @@
 """
 Route Recorder (Step 1a)
 
-Walk the robot manually while this script records waypoints (x, y, yaw)
+Walk the robot manually while this script records monitoring waypoints (x, y, yaw)
 when you press Enter. For 3D LiDAR mapping, use lidar_mapper.py separately.
 
 Usage:
-    python patrol_system/route_recorder.py
+    python sensor_monitor/route_recorder.py
 
 Controls:
     [Enter] - Record current position as waypoint

@@ -2,13 +2,13 @@
 Sensor Bridge for Jetson (Step 2 helper) — stdlib-only version
 
 Runs on the Go2's Jetson board. Reads sensor data from Arduino via USB serial
-and serves it over TCP so patrol_navigator.py on the PC can connect.
+and serves it over TCP so auto_navigator.py on the PC can connect.
 
 Uses ONLY Python stdlib (no pyserial, no unitree_sdk2py).
 
 Deployment:
     # Copy to Jetson:
-    scp patrol_system/sensor_bridge.py unitree@192.168.123.18:~/
+    scp sensor_monitor/sensor_bridge.py unitree@192.168.123.18:~/
 
     # SSH in and run:
     ssh unitree@192.168.123.18

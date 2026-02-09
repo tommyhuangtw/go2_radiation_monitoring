@@ -2,19 +2,19 @@
 3D Sensor Map Visualization (Step 3)
 
 Creates both a 3D visualization (open3d) and a 2D heatmap (matplotlib)
-from patrol data overlaid on the LiDAR point cloud / floor plan.
+from sensor data overlaid on the LiDAR point cloud / floor plan.
 
 Usage:
-    python patrol_system/sensor_heatmap.py                 # full sensor heatmap
-    python patrol_system/sensor_heatmap.py --mode 2d       # 2D only
-    python patrol_system/sensor_heatmap.py --mode 3d       # 3D only
-    python patrol_system/sensor_heatmap.py --mode both     # both (default)
-    python patrol_system/sensor_heatmap.py --cloud-only    # point cloud viewer
+    python sensor_monitor/sensor_heatmap.py                 # full sensor heatmap
+    python sensor_monitor/sensor_heatmap.py --mode 2d       # 2D only
+    python sensor_monitor/sensor_heatmap.py --mode 3d       # 3D only
+    python sensor_monitor/sensor_heatmap.py --mode both     # both (default)
+    python sensor_monitor/sensor_heatmap.py --cloud-only    # point cloud viewer
 
 Prerequisites:
-    - point_cloud.ply in patrol_system/data/ (from lidar_mapper.py)
-    - floor_plan.npy + map_meta.json in patrol_system/data/ (from lidar_mapper.py)
-    - patrol_data.csv in patrol_system/data/ (from patrol_navigator.py, not needed for --cloud-only)
+    - point_cloud.ply in sensor_monitor/data/ (from lidar_mapper.py)
+    - floor_plan.npy + map_meta.json in sensor_monitor/data/ (from lidar_mapper.py)
+    - sensor_data.csv in sensor_monitor/data/ (from auto_navigator.py, not needed for --cloud-only)
 """
 
 import sys
@@ -90,12 +90,12 @@ def _make_sphere_pcd(center, radius, color, n_points=200):
     return pcd
 
 
-def load_patrol_data():
-    """Load patrol data CSV, aligning positions to map frame via waypoints.json."""
-    csv_path = os.path.join(DATA_DIR, "patrol_data.csv")
+def load_sensor_data():
+    """Load sensor data CSV, aligning positions to map frame via waypoints.json."""
+    csv_path = os.path.join(DATA_DIR, "sensor_data.csv")
     if not os.path.exists(csv_path):
         print(f"ERROR: {csv_path} not found!")
-        print("Run patrol_navigator.py first.")
+        print("Run auto_navigator.py first.")
         return None
 
     data = []
@@ -113,9 +113,9 @@ def load_patrol_data():
             }
             data.append(entry)
 
-    # Align patrol positions to map frame using waypoints.json
+    # Align sensor positions to map frame using waypoints.json
     # (waypoints.json and point_cloud.ply share the same odom frame,
-    #  but patrol_data.csv is from a different boot session)
+    #  but sensor_data.csv is from a different boot session)
     wp_path = os.path.join(DATA_DIR, "waypoints.json")
     if os.path.exists(wp_path):
         with open(wp_path, 'r') as f:
@@ -130,7 +130,7 @@ def load_patrol_data():
         print(f"Aligned {aligned}/{len(data)} positions to map frame via waypoints.json")
         _check_alignment(wp_data, source_label="Waypoints")
     else:
-        print("WARNING: waypoints.json not found — using patrol_data positions (may be misaligned)")
+        print("WARNING: waypoints.json not found — using sensor_data positions (may be misaligned)")
 
     valid = [d for d in data if d["sensor_value"] is not None]
     print(f"Loaded {len(data)} data points ({len(valid)} with sensor values)")
@@ -159,7 +159,7 @@ def sensor_to_color(value, vmin, vmax):
 
 
 def visualize_cloud_only():
-    """3D point cloud viewer using open3d (no patrol data needed)."""
+    """3D point cloud viewer using open3d (no sensor data needed)."""
     try:
         import open3d as o3d
     except ImportError:
@@ -229,7 +229,7 @@ def visualize_cloud_only():
     )
 
 
-def visualize_3d(patrol_data, sensor_vmin=None, sensor_vmax=None):
+def visualize_3d(sensor_data, sensor_vmin=None, sensor_vmax=None):
     """3D visualization using open3d: point cloud + sensor spheres."""
     try:
         import open3d as o3d
@@ -262,7 +262,7 @@ def visualize_3d(patrol_data, sensor_vmin=None, sensor_vmax=None):
         )
 
     # Get sensor values for color scaling
-    valid_data = [d for d in patrol_data if d["sensor_value"] is not None]
+    valid_data = [d for d in sensor_data if d["sensor_value"] is not None]
     if not valid_data:
         print("No sensor data to visualize.")
         if cloud is not None:
@@ -327,9 +327,9 @@ def visualize_3d(patrol_data, sensor_vmin=None, sensor_vmax=None):
         stem_lines.colors = o3d.utility.Vector3dVector(stem_clr)
         geometries.append(stem_lines)
 
-    # Add patrol path as a line set (at ground level)
-    if len(patrol_data) >= 2:
-        pts = np.array([[d["x"], d["y"], floor_z + 0.15] for d in patrol_data])
+    # Add route path as a line set (at ground level)
+    if len(sensor_data) >= 2:
+        pts = np.array([[d["x"], d["y"], floor_z + 0.15] for d in sensor_data])
         idx = np.array([[i, i+1] for i in range(len(pts) - 1)], dtype=np.int32)
         clr = np.tile([1.0, 0.0, 0.0], (len(idx), 1))
 
@@ -348,7 +348,7 @@ def visualize_3d(patrol_data, sensor_vmin=None, sensor_vmax=None):
     )
 
 
-def visualize_2d(patrol_data, sensor_vmin=None, sensor_vmax=None):
+def visualize_2d(sensor_data, sensor_vmin=None, sensor_vmax=None):
     """2D heatmap visualization using matplotlib."""
     try:
         import matplotlib
@@ -386,13 +386,13 @@ def visualize_2d(patrol_data, sensor_vmin=None, sensor_vmax=None):
     else:
         print("No floor plan found. Showing sensor data on blank background.")
 
-    # Plot patrol path
-    all_x = [d["x"] for d in patrol_data]
-    all_y = [d["y"] for d in patrol_data]
-    ax.plot(all_x, all_y, 'k--', linewidth=1, alpha=0.5, label='Patrol path')
+    # Plot route path
+    all_x = [d["x"] for d in sensor_data]
+    all_y = [d["y"] for d in sensor_data]
+    ax.plot(all_x, all_y, 'k--', linewidth=1, alpha=0.5, label='Route')
 
     # Plot sensor readings as colored circles
-    valid_data = [d for d in patrol_data if d["sensor_value"] is not None]
+    valid_data = [d for d in sensor_data if d["sensor_value"] is not None]
     if valid_data:
         sx = [d["x"] for d in valid_data]
         sy = [d["y"] for d in valid_data]
@@ -435,7 +435,7 @@ def main():
     parser.add_argument("--mode", choices=["2d", "3d", "both"], default="both",
                         help="Visualization mode (default: both)")
     parser.add_argument("--cloud-only", action="store_true",
-                        help="View point cloud only (no patrol data needed)")
+                        help="View point cloud only (no sensor data needed)")
     parser.add_argument("--vmin", type=float, default=None,
                         help="Min sensor value for color scale (default: auto from data)")
     parser.add_argument("--vmax", type=float, default=None,
@@ -446,23 +446,23 @@ def main():
         visualize_cloud_only()
         return
 
-    patrol_data = load_patrol_data()
-    if patrol_data is None:
+    sensor_data = load_sensor_data()
+    if sensor_data is None:
         return
 
     # Print sensor value summary table
     print(f"\n  {'Waypoint':<10} {'Position':<16} {'Sensor Value'}")
     print(f"  {'--------':<10} {'--------':<16} {'------------'}")
-    for d in patrol_data:
+    for d in sensor_data:
         v_str = f"{d['sensor_value']:.1f}" if d["sensor_value"] is not None else "N/A"
         print(f"  #{d['waypoint']:<9} ({d['x']:.2f}, {d['y']:.2f}){'':>4} {v_str}")
     print()
 
     if args.mode in ("3d", "both"):
-        visualize_3d(patrol_data, sensor_vmin=args.vmin, sensor_vmax=args.vmax)
+        visualize_3d(sensor_data, sensor_vmin=args.vmin, sensor_vmax=args.vmax)
 
     if args.mode in ("2d", "both"):
-        visualize_2d(patrol_data, sensor_vmin=args.vmin, sensor_vmax=args.vmax)
+        visualize_2d(sensor_data, sensor_vmin=args.vmin, sensor_vmax=args.vmax)
 
 
 if __name__ == "__main__":
