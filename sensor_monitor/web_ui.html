@@ -37,9 +37,7 @@
   #map-container { position: relative; width: 100%; background: #111; }
   #floor-plan-img {
     display: block; width: 100%; height: auto; opacity: 0;
-    transition: opacity 0.3s;
   }
-  #floor-plan-img.loaded { opacity: 1; }
   #map-canvas {
     position: absolute; top: 0; left: 0; width: 100%; height: 100%;
     pointer-events: none;
@@ -268,6 +266,7 @@ let waypoints = [];
 let latestState = null;
 let floorPlanImg = null;
 let mapCanvasReady = false;
+let mapViewport = null;  // {sx, sy, sw, sh} — source rect for auto-zoom
 
 // ---- Thresholds (persisted in localStorage) ----
 function loadThresholds() {
@@ -439,43 +438,76 @@ function initMapCanvas() {
   canvas.width = img.naturalWidth;
   canvas.height = img.naturalHeight;
   document.getElementById('map-no-data').style.display = 'none';
+
+  // Compute viewport: center on route, trim 10% from each edge of the full image
+  mapViewport = null;
+  if (waypoints.length > 0 && mapMeta) {
+    // Find route center in image pixel coords
+    let sumX = 0, sumY = 0;
+    for (const wp of waypoints) {
+      const gx = (wp.x - mapMeta.origin_x) / mapMeta.resolution;
+      const gy = (wp.y - mapMeta.origin_y) / mapMeta.resolution;
+      const gyFlipped = mapMeta.height - 1 - gy;
+      sumX += (gx / mapMeta.width) * img.naturalWidth;
+      sumY += (gyFlipped / mapMeta.height) * img.naturalHeight;
+    }
+    const cx = sumX / waypoints.length;
+    const cy = sumY / waypoints.length;
+    // Viewport = 80% of full image, centered on route center
+    const sw = img.naturalWidth * 0.8;
+    const sh = img.naturalHeight * 0.8;
+    let sx = cx - sw / 2;
+    let sy = cy - sh / 2;
+    // Clamp to image bounds
+    sx = Math.max(0, Math.min(sx, img.naturalWidth - sw));
+    sy = Math.max(0, Math.min(sy, img.naturalHeight - sh));
+    mapViewport = {sx, sy, sw, sh};
+  }
+
   mapCanvasReady = true;
   if (latestState) drawMap(latestState);
 }
 
 function worldToCanvas(wx, wy, canvas) {
   if (!mapMeta) return null;
-  // map_meta gives us the grid coordinate system
-  // floor_plan.png is rendered by matplotlib with origin='lower' convention
-  // The PNG image has matplotlib axes/labels, so we use the grid dimensions
-  // We need to map world coords to the image pixel space
   const img = floorPlanImg;
   if (!img) return null;
 
-  // Grid pixel coords
+  // World coords to image pixel coords
   const gx = (wx - mapMeta.origin_x) / mapMeta.resolution;
   const gy = (wy - mapMeta.origin_y) / mapMeta.resolution;
-  // Flip Y (grid origin='lower' = bottom-left, canvas origin = top-left)
   const gyFlipped = mapMeta.height - 1 - gy;
+  const imgX = (gx / mapMeta.width) * img.naturalWidth;
+  const imgY = (gyFlipped / mapMeta.height) * img.naturalHeight;
 
-  // The matplotlib PNG has padding for axes. We approximate the plot area.
-  // matplotlib default: left~12.5%, right~95%, bottom~10%, top~93% of figure
-  const plotLeft = 0.125 * img.naturalWidth;
-  const plotRight = 0.95 * img.naturalWidth;
-  const plotTop = 0.07 * img.naturalHeight;
-  const plotBottom = 0.90 * img.naturalHeight;
-  const plotW = plotRight - plotLeft;
-  const plotH = plotBottom - plotTop;
+  // Apply viewport (auto-zoom) if set
+  if (mapViewport) {
+    const cx = ((imgX - mapViewport.sx) / mapViewport.sw) * canvas.width;
+    const cy = ((imgY - mapViewport.sy) / mapViewport.sh) * canvas.height;
+    return {x: cx, y: cy};
+  }
 
-  const cx = plotLeft + (gx / mapMeta.width) * plotW;
-  const cy = plotTop + (gyFlipped / mapMeta.height) * plotH;
-  return {x: cx, y: cy};
+  // Full image (no zoom)
+  const scaleX = canvas.width / img.naturalWidth;
+  const scaleY = canvas.height / img.naturalHeight;
+  return {x: imgX * scaleX, y: imgY * scaleY};
 }
 
 function drawMap(s) {
   const canvas = document.getElementById('map-canvas');
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Draw floor plan image (zoomed to viewport if set)
+  if (floorPlanImg && floorPlanImg.naturalWidth > 0) {
+    if (mapViewport) {
+      ctx.drawImage(floorPlanImg,
+        mapViewport.sx, mapViewport.sy, mapViewport.sw, mapViewport.sh,
+        0, 0, canvas.width, canvas.height);
+    } else {
+      ctx.drawImage(floorPlanImg, 0, 0, canvas.width, canvas.height);
+    }
+  }
 
   if (!mapMeta) return;
 

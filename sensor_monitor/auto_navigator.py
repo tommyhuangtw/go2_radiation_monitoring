@@ -9,10 +9,14 @@ Usage:
     python sensor_monitor/auto_navigator.py --web          # Launch web UI
     python sensor_monitor/auto_navigator.py --web --web-port 8080
 
+    # WiFi mode (requires dds_bridge.py running on Jetson):
+    python sensor_monitor/auto_navigator.py --bridge 192.168.0.207
+
 Prerequisites:
     - waypoints.json in sensor_monitor/data/ (from route_recorder.py)
     - Robot placed at the same starting position as during recording
     - (Optional) sensor_bridge.py running on Jetson for sensor data
+    - (WiFi mode) dds_bridge.py running on Jetson
 """
 
 import sys
@@ -35,8 +39,11 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
 class AutoNavigator:
     def __init__(self, network_interface="enp0s2",
-                 sensor_host="192.168.123.18", sensor_port=9876):
-        ChannelFactoryInitialize(0, network_interface)
+                 sensor_host="192.168.123.18", sensor_port=9876,
+                 bridge_host=None, bridge_port=9877,
+                 no_sensor=False):
+        self._bridge_mode = bridge_host is not None
+        self._bridge_client = None
 
         # Position tracking
         self.current_x = 0.0
@@ -65,26 +72,46 @@ class AutoNavigator:
         self._stop_event = threading.Event()
         self._web_mode = False
 
-        # Subscribe to state
-        self.sub = ChannelSubscriber("rt/sportmodestate", SportModeState_)
-        self.sub.Init(self._on_state, 10)
+        if self._bridge_mode:
+            # WiFi mode: connect to DDS bridge on Jetson
+            from wifi_bridge_client import WiFiBridgeClient
+            print(f"Connecting to DDS bridge at {bridge_host}:{bridge_port}...")
+            self._bridge_client = WiFiBridgeClient(bridge_host, bridge_port)
+            self._bridge_client.connect()
+            self.sport_client = self._bridge_client  # same interface
+            print("Bridge connected!")
+        else:
+            # Ethernet mode: direct DDS
+            ChannelFactoryInitialize(0, network_interface)
+
+            # Subscribe to state
+            self.sub = ChannelSubscriber("rt/sportmodestate", SportModeState_)
+            self.sub.Init(self._on_state, 10)
+
+            # Sport Client
+            self.sport_client = SportClient()
+            self.sport_client.SetTimeout(10.0)
+            self.sport_client.Init()
 
         # Start sensor TCP client thread
+        self._no_sensor = no_sensor
         self._sensor_host = sensor_host
         self._sensor_port = sensor_port
-        self._sensor_thread = threading.Thread(
-            target=self._sensor_tcp_loop, daemon=True)
-        self._sensor_thread.start()
-
-        # Sport Client
-        self.sport_client = SportClient()
-        self.sport_client.SetTimeout(10.0)
-        self.sport_client.Init()
+        if not no_sensor:
+            self._sensor_thread = threading.Thread(
+                target=self._sensor_tcp_loop, daemon=True)
+            self._sensor_thread.start()
 
         # Wait for state
         print("Waiting for state updates...")
         t0 = time.time()
         while not self.state_ready and time.time() - t0 < 5.0:
+            if self._bridge_mode:
+                # Poll bridge client for state
+                self.state_ready = self._bridge_client.state_ready
+                if self.state_ready:
+                    x, y, yaw = self._bridge_client.get_position()
+                    self.current_x, self.current_y, self.current_yaw = x, y, yaw
             time.sleep(0.1)
         if self.state_ready:
             print(f"State ready! Position: ({self.current_x:.2f}, {self.current_y:.2f}), "
@@ -92,22 +119,40 @@ class AutoNavigator:
         else:
             print("WARNING: State update timeout! Robot may not be connected.")
 
+        # Start bridge state polling thread (WiFi mode)
+        if self._bridge_mode:
+            self._bridge_poll_thread = threading.Thread(
+                target=self._bridge_state_poll, daemon=True)
+            self._bridge_poll_thread.start()
+
         # Wait for sensor connection (up to 8s to cover connect timeout + retry)
-        if not self.sensor_connected:
+        if no_sensor:
+            print("Sensor disabled (--no-sensor).")
+        elif not self.sensor_connected:
             print(f"Waiting for sensor connection ({self._sensor_host}:{self._sensor_port})...")
             t0 = time.time()
             while not self.sensor_connected and time.time() - t0 < 8.0:
                 time.sleep(0.2)
-        if self.sensor_connected:
-            print(f"Sensor connected!")
-        else:
-            print(f"WARNING: Sensor not connected. Values will be N/A.")
+            if self.sensor_connected:
+                print(f"Sensor connected!")
+            else:
+                print(f"WARNING: Sensor not connected. Values will be N/A.")
 
     def _on_state(self, msg):
         self.current_x = msg.position[0]
         self.current_y = msg.position[1]
         self.current_yaw = msg.imu_state.rpy[2]
         self.state_ready = True
+
+    def _bridge_state_poll(self):
+        """Poll bridge client for state updates (WiFi mode)."""
+        while self._bridge_mode and self._bridge_client._connected:
+            x, y, yaw = self._bridge_client.get_position()
+            self.current_x = x
+            self.current_y = y
+            self.current_yaw = yaw
+            self.state_ready = self._bridge_client.state_ready
+            time.sleep(0.02)  # 50Hz polling
 
     def _sensor_tcp_loop(self):
         """Background thread: connect to sensor bridge via TCP, read JSON lines."""
@@ -619,10 +664,18 @@ if __name__ == "__main__":
     parser.add_argument("--loop", action="store_true", help="Loop route continuously")
     parser.add_argument("--wait", action="store_true", help="Wait for Enter between waypoints")
     parser.add_argument("--interface", default="enp0s2", help="Network interface")
+    parser.add_argument("--bridge", default=None, metavar="HOST",
+                        help="WiFi bridge host (e.g. 192.168.0.207). Uses TCP bridge instead of DDS.")
+    parser.add_argument("--bridge-port", type=int, default=9877,
+                        help="WiFi bridge TCP port (default: 9877)")
     parser.add_argument("--sensor-host", default="192.168.123.18",
                         help="Sensor bridge TCP host (default: 192.168.123.18)")
     parser.add_argument("--sensor-port", type=int, default=9876,
                         help="Sensor bridge TCP port (default: 9876)")
+    parser.add_argument("--no-sensor", action="store_true",
+                        help="Skip sensor connection entirely")
+    parser.add_argument("--video-port", type=int, default=9878,
+                        help="Video relay TCP port on bridge host (default: 9878)")
     parser.add_argument("--web", action="store_true",
                         help="Launch web UI instead of CLI mode")
     parser.add_argument("--web-port", type=int, default=8080,
@@ -631,10 +684,16 @@ if __name__ == "__main__":
 
     nav = AutoNavigator(args.interface,
                           sensor_host=args.sensor_host,
-                          sensor_port=args.sensor_port)
+                          sensor_port=args.sensor_port,
+                          bridge_host=args.bridge,
+                          bridge_port=args.bridge_port,
+                          no_sensor=args.no_sensor)
 
     if args.web:
         from web_server import run_web_server
-        run_web_server(nav, port=args.web_port)
+        run_web_server(nav, port=args.web_port,
+                       bridge_mode=nav._bridge_mode,
+                       bridge_host=args.bridge,
+                       video_port=args.video_port)
     else:
         nav.run_patrol(loop=args.loop, wait_for_enter=args.wait)

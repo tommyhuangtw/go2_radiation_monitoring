@@ -6,6 +6,7 @@ when you press Enter. For 3D LiDAR mapping, use lidar_mapper.py separately.
 
 Usage:
     python sensor_monitor/route_recorder.py
+    python sensor_monitor/route_recorder.py --bridge 192.168.0.207   # WiFi mode
 
 Controls:
     [Enter] - Record current position as waypoint
@@ -34,8 +35,10 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
 
 class RouteRecorder:
-    def __init__(self, network_interface="enp0s2"):
-        ChannelFactoryInitialize(0, network_interface)
+    def __init__(self, network_interface="enp0s2",
+                 bridge_host=None, bridge_port=9877):
+        self._bridge_mode = bridge_host is not None
+        self._bridge_client = None
 
         # Position tracking
         self.current_x = 0.0
@@ -46,14 +49,34 @@ class RouteRecorder:
         # Waypoints
         self.waypoints = []
 
-        # Subscribe to robot state
-        self.state_sub = ChannelSubscriber("rt/sportmodestate", SportModeState_)
-        self.state_sub.Init(self._on_state, 10)
+        if self._bridge_mode:
+            # WiFi mode: get state from DDS bridge
+            from wifi_bridge_client import WiFiBridgeClient
+            print(f"Connecting to DDS bridge at {bridge_host}:{bridge_port}...")
+            self._bridge_client = WiFiBridgeClient(bridge_host, bridge_port)
+            self._bridge_client.connect()
+            print("Bridge connected!")
+
+            # Start state polling thread
+            import threading
+            self._poll_thread = threading.Thread(
+                target=self._bridge_state_poll, daemon=True)
+            self._poll_thread.start()
+        else:
+            # Ethernet mode: direct DDS
+            ChannelFactoryInitialize(0, network_interface)
+            self.state_sub = ChannelSubscriber("rt/sportmodestate", SportModeState_)
+            self.state_sub.Init(self._on_state, 10)
 
         # Wait for state
         print("Waiting for robot state...")
         t0 = time.time()
         while not self.state_ready and time.time() - t0 < 5.0:
+            if self._bridge_mode:
+                self.state_ready = self._bridge_client.state_ready
+                if self.state_ready:
+                    x, y, yaw = self._bridge_client.get_position()
+                    self.current_x, self.current_y, self.current_yaw = x, y, yaw
             time.sleep(0.1)
         if self.state_ready:
             print(f"State ready! Position: ({self.current_x:.3f}, {self.current_y:.3f}), yaw={math.degrees(self.current_yaw):.1f}")
@@ -65,6 +88,16 @@ class RouteRecorder:
         self.current_y = msg.position[1]
         self.current_yaw = msg.imu_state.rpy[2]
         self.state_ready = True
+
+    def _bridge_state_poll(self):
+        """Poll bridge client for state updates (WiFi mode)."""
+        while self._bridge_mode and self._bridge_client._connected:
+            x, y, yaw = self._bridge_client.get_position()
+            self.current_x = x
+            self.current_y = y
+            self.current_yaw = yaw
+            self.state_ready = self._bridge_client.state_ready
+            time.sleep(0.05)  # 20Hz polling (sufficient for recording)
 
     def save_all(self):
         """Save waypoints to JSON."""
@@ -155,5 +188,16 @@ class RouteRecorder:
 
 
 if __name__ == "__main__":
-    recorder = RouteRecorder("enp0s2")
+    import argparse
+    parser = argparse.ArgumentParser(description="Route Recorder - record monitoring waypoints")
+    parser.add_argument("--interface", default="enp0s2", help="Network interface (ethernet mode)")
+    parser.add_argument("--bridge", default=None, metavar="HOST",
+                        help="WiFi bridge host (e.g. 192.168.0.207)")
+    parser.add_argument("--bridge-port", type=int, default=9877,
+                        help="WiFi bridge TCP port (default: 9877)")
+    args = parser.parse_args()
+
+    recorder = RouteRecorder(args.interface,
+                             bridge_host=args.bridge,
+                             bridge_port=args.bridge_port)
     recorder.run()

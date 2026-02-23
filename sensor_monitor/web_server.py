@@ -11,8 +11,11 @@ Launched via: python sensor_monitor/auto_navigator.py --web
 
 import os
 import json
+import struct
 import asyncio
+import logging
 import threading
+from queue import Queue, Empty
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -28,6 +31,9 @@ app = FastAPI(title="Go2 Patrol Monitor")
 navigator = None
 video_client = None
 _video_lock = threading.Lock()
+_bridge_mode = False
+_bridge_host = None
+_webrtc_frame_queue = Queue(maxsize=2)
 
 # Connected WebSocket clients
 connected_clients: set[WebSocket] = set()
@@ -48,7 +54,8 @@ async def get_map_meta():
     if not meta_path.exists():
         return JSONResponse({"error": "map_meta.json not found"}, status_code=404)
     with open(meta_path) as f:
-        return json.load(f)
+        data = json.load(f)
+    return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/waypoints")
@@ -57,7 +64,8 @@ async def get_waypoints():
     if not wp_path.exists():
         return JSONResponse({"error": "waypoints.json not found"}, status_code=404)
     with open(wp_path) as f:
-        return json.load(f)
+        data = json.load(f)
+    return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/floor_plan")
@@ -65,7 +73,8 @@ async def get_floor_plan():
     img_path = DATA_DIR / "floor_plan.png"
     if not img_path.exists():
         return JSONResponse({"error": "floor_plan.png not found"}, status_code=404)
-    return FileResponse(str(img_path), media_type="image/png")
+    return FileResponse(str(img_path), media_type="image/png",
+                        headers={"Cache-Control": "no-store"})
 
 
 # ------------------------------------------------------------------
@@ -73,8 +82,10 @@ async def get_floor_plan():
 # ------------------------------------------------------------------
 
 def _get_video_client():
-    """Lazy-init VideoClient (thread-safe)."""
+    """Lazy-init VideoClient (thread-safe). Skipped in bridge/WiFi mode."""
     global video_client
+    if _bridge_mode:
+        return None
     if video_client is not None:
         return video_client
     with _video_lock:
@@ -93,8 +104,64 @@ def _get_video_client():
             return None
 
 
+def _init_video_bridge(bridge_host, video_port=9878):
+    """Background thread: receive JPEG frames from dds_bridge video relay over TCP."""
+    import socket
+    while True:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(5.0)
+            print(f"Video bridge: connecting to {bridge_host}:{video_port}...")
+            sock.connect((bridge_host, video_port))
+            sock.settimeout(None)
+            print(f"Video bridge: connected!")
+
+            while True:
+                # Read 4-byte big-endian length prefix
+                header = b""
+                while len(header) < 4:
+                    chunk = sock.recv(4 - len(header))
+                    if not chunk:
+                        raise ConnectionError("Video bridge disconnected")
+                    header += chunk
+                length = struct.unpack('>I', header)[0]
+
+                # Read JPEG data
+                data = b""
+                while len(data) < length:
+                    chunk = sock.recv(min(length - len(data), 65536))
+                    if not chunk:
+                        raise ConnectionError("Video bridge disconnected")
+                    data += chunk
+
+                # Put into frame queue (drop old if full)
+                if _webrtc_frame_queue.full():
+                    try:
+                        _webrtc_frame_queue.get_nowait()
+                    except Empty:
+                        pass
+                _webrtc_frame_queue.put(data)
+
+        except (ConnectionRefusedError, socket.timeout, OSError, ConnectionError) as e:
+            print(f"Video bridge: {e} — retrying in 3s...")
+        finally:
+            try:
+                sock.close()
+            except OSError:
+                pass
+        import time
+        time.sleep(3)
+
+
 def _capture_frame():
     """Blocking call to get one JPEG frame from the robot camera."""
+    if _bridge_mode:
+        # WiFi mode: read from WebRTC frame queue
+        try:
+            return _webrtc_frame_queue.get(timeout=0.5)
+        except Empty:
+            return None
+
     vc = _get_video_client()
     if vc is None:
         return None
@@ -210,14 +277,25 @@ def _handle_start_patrol():
 # Entry point
 # ------------------------------------------------------------------
 
-def run_web_server(nav, port=8080):
+def run_web_server(nav, port=8080, bridge_mode=False, bridge_host=None,
+                   video_port=9878):
     """Start the web server with the given AutoNavigator instance."""
-    global navigator
+    global navigator, _bridge_mode, _bridge_host
     navigator = nav
+    _bridge_mode = bridge_mode
+    _bridge_host = bridge_host
 
     print(f"\n{'='*50}")
     print(f"  Go2 Patrol Monitor — Web UI")
     print(f"  http://localhost:{port}")
+    if bridge_mode:
+        print(f"  Mode: WiFi (bridge → {bridge_host})")
     print(f"{'='*50}\n")
+
+    # Start video bridge receiver in bridge mode
+    if bridge_mode and bridge_host:
+        video_thread = threading.Thread(
+            target=_init_video_bridge, args=(bridge_host, video_port), daemon=True)
+        video_thread.start()
 
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
