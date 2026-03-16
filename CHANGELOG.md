@@ -1,7 +1,5 @@
 # Changelog
 
-## [Unreleased] - 2026-03-16
-
 ### Added
 
 #### New Scripts
@@ -127,7 +125,7 @@ from sensor_surface_sphere_overlay import generate_2d_heatmap_only
 png_path = generate_2d_heatmap_only()
 ```
 
->_All other stuff follows the weicheng's usage instructions._
+>_All other stuff follows Weicheng's usage instructions._
 
 ## Example Data
 Use this [Google Drive link](https://drive.google.com/file/d/1aNa7x8kr7Ephyaay-bgzjgUaXHLSywb8/) to download the example data zip.
