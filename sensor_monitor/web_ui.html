@@ -5,147 +5,216 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Go2 Patrol Monitor</title>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; }
+  :root {
+    --bg: #0b0b14;
+    --bg-panel: #131325;
+    --bg-header: #1a1a3e;
+    --border: #252560;
+    --accent: #4f8cff;
+    --accent-dim: #2a4a8a;
+    --green: #22c55e;
+    --yellow: #eab308;
+    --red: #ef4444;
+    --orange: #f97316;
+    --purple: #a855f7;
+    --text: #e8e8f0;
+    --text-muted: #7878a0;
+    --radius: 14px;
+    --shadow: 0 4px 24px rgba(0,0,0,0.45);
+  }
 
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  /* Header */
   header {
     display: flex; justify-content: space-between; align-items: center;
-    padding: 12px 20px; background: #16213e; border-bottom: 2px solid #0f3460;
+    padding: 14px 24px;
+    background: linear-gradient(135deg, #0d0d2b, #1a1a3e);
+    border-bottom: 1px solid var(--border);
   }
-  header h1 { font-size: 1.3em; font-weight: 600; }
+  header h1 { font-size: 1.25em; font-weight: 700; letter-spacing: -0.3px; }
+  header h1 span { color: var(--accent); }
+  .header-right { display: flex; align-items: center; gap: 12px; }
   #status-badge {
-    padding: 4px 14px; border-radius: 12px; font-size: 0.85em; font-weight: 600;
-    background: #555; text-transform: uppercase;
+    padding: 5px 16px; border-radius: 20px; font-size: 0.78em; font-weight: 700;
+    background: #444; text-transform: uppercase; letter-spacing: 0.6px;
   }
 
+  /* Tabs */
+  .tab-bar {
+    display: flex; gap: 0; padding: 0 24px; background: var(--bg-panel);
+    border-bottom: 1px solid var(--border);
+  }
+  .tab-btn {
+    padding: 12px 24px; border: none; background: transparent; color: var(--text-muted);
+    font-size: 0.88em; font-weight: 600; cursor: pointer; position: relative;
+    transition: color 0.2s;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { color: var(--accent); }
+  .tab-btn.active::after {
+    content: ''; position: absolute; bottom: 0; left: 12px; right: 12px;
+    height: 2px; background: var(--accent); border-radius: 1px;
+  }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* Grid layout */
   .main-grid {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
-    padding: 12px; max-width: 1400px; margin: 0 auto;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+    padding: 14px 24px; max-width: 1600px; margin: 0 auto;
   }
 
+  /* Panels */
   .panel {
-    background: #16213e; border-radius: 8px; border: 1px solid #0f3460; overflow: hidden;
+    background: var(--bg-panel); border-radius: var(--radius);
+    border: 1px solid var(--border); box-shadow: var(--shadow); overflow: hidden;
   }
   .panel-header {
-    padding: 8px 14px; background: #0f3460; font-size: 0.85em; font-weight: 600;
-    text-transform: uppercase; letter-spacing: 0.5px;
+    padding: 10px 16px; background: var(--bg-header); font-size: 0.82em;
+    font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px;
+    display: flex; justify-content: space-between; align-items: center;
+    border-bottom: 1px solid var(--border);
   }
-  .panel-body { padding: 12px; }
+  .panel-body { padding: 14px; }
+  .full-width { grid-column: 1 / -1; }
 
   /* Floor plan */
-  #map-panel { position: relative; }
-  #map-container { position: relative; width: 100%; background: #111; }
-  #floor-plan-img {
-    display: block; width: 100%; height: auto; opacity: 0;
-  }
-  #map-canvas {
-    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-    pointer-events: none;
-  }
-  #map-no-data { padding: 40px; text-align: center; color: #888; }
+  #map-container { position: relative; width: 100%; background: #080810; border-radius: 8px; overflow: hidden; }
+  #floor-plan-img { display: block; width: 100%; height: auto; opacity: 0; transition: opacity 0.3s; }
+  #floor-plan-img.loaded { opacity: 1; }
+  #map-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+  #map-no-data { display: none; padding: 50px; text-align: center; color: var(--text-muted); }
 
   /* Camera */
-  #camera-feed {
-    display: block; width: 100%; max-height: 350px; object-fit: contain;
-    background: #000; border-radius: 4px;
-  }
-  #camera-error { display: none; padding: 60px 20px; text-align: center; color: #888; background: #111; border-radius: 4px; }
+  #camera-feed { display: block; width: 100%; max-height: 360px; object-fit: contain; background: #000; border-radius: 8px; }
+  #camera-error { display: none; padding: 60px 20px; text-align: center; color: var(--text-muted); background: #080810; border-radius: 8px; }
 
   /* Controls */
-  .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
   .btn {
-    padding: 10px 20px; border: none; border-radius: 6px; font-size: 0.95em;
-    font-weight: 600; cursor: pointer; transition: all 0.15s;
+    padding: 10px 22px; border: none; border-radius: 8px; font-size: 0.9em;
+    font-weight: 700; cursor: pointer; transition: all 0.15s; letter-spacing: 0.3px;
   }
-  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .btn-start { background: #27ae60; color: #fff; }
-  .btn-start:hover:not(:disabled) { background: #2ecc71; }
-  .btn-next { background: #2980b9; color: #fff; }
-  .btn-next:hover:not(:disabled) { background: #3498db; }
-  .btn-stop { background: #c0392b; color: #fff; }
-  .btn-stop:hover:not(:disabled) { background: #e74c3c; }
+  .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .btn-start { background: var(--green); color: #fff; }
+  .btn-start:hover:not(:disabled) { background: #16a34a; transform: translateY(-1px); }
+  .btn-next { background: var(--accent); color: #fff; }
+  .btn-next:hover:not(:disabled) { background: #3b7aed; transform: translateY(-1px); }
+  .btn-stop { background: var(--red); color: #fff; }
+  .btn-stop:hover:not(:disabled) { background: #dc2626; transform: translateY(-1px); }
+  .btn-3d { background: var(--purple); color: #fff; font-size: 0.78em; padding: 6px 16px; border-radius: 6px; }
+  .btn-3d:hover:not(:disabled) { background: #9333ea; transform: translateY(-1px); }
 
   /* Progress */
-  .progress-section { margin-bottom: 12px; }
   .progress-bar-bg {
-    width: 100%; height: 20px; background: #2c3e50; border-radius: 10px; overflow: hidden;
+    width: 100%; height: 6px; background: #1e1e3a; border-radius: 3px; overflow: hidden; margin-bottom: 6px;
   }
   .progress-bar-fill {
-    height: 100%; background: linear-gradient(90deg, #2980b9, #27ae60);
-    transition: width 0.3s; border-radius: 10px;
+    height: 100%; background: linear-gradient(90deg, var(--accent), var(--green));
+    transition: width 0.4s ease; border-radius: 3px;
   }
-  .progress-text { font-size: 0.85em; color: #aaa; margin-top: 4px; }
+  .progress-text { font-size: 0.82em; color: var(--text-muted); }
 
   /* Live data */
-  .data-grid {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
-  }
+  .data-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .data-item {
-    background: #1a1a2e; padding: 10px; border-radius: 6px; border: 1px solid #2c3e50;
+    background: #0e0e1e; padding: 12px; border-radius: 10px; border: 1px solid #1e1e3a;
   }
-  .data-label { font-size: 0.75em; color: #888; text-transform: uppercase; margin-bottom: 2px; }
-  .data-value { font-size: 1.2em; font-weight: 600; font-family: 'Courier New', monospace; }
-  .data-item.sensor-safe .data-value { color: #2ecc71; }
-  .data-item.sensor-warn .data-value { color: #f39c12; }
-  .data-item.sensor-danger .data-value { color: #e74c3c; }
+  .data-label { font-size: 0.7em; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .data-value { font-size: 1.25em; font-weight: 700; font-family: 'JetBrains Mono', 'Courier New', monospace; }
+  .data-item.sensor-safe .data-value { color: var(--green); }
+  .data-item.sensor-warn .data-value { color: var(--yellow); }
+  .data-item.sensor-danger .data-value { color: var(--red); }
 
   /* Thresholds */
-  .threshold-row {
-    display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap;
-  }
-  .threshold-row label { font-size: 0.8em; color: #aaa; }
+  .threshold-row { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  .threshold-row label { font-size: 0.78em; color: var(--text-muted); }
   .threshold-row input {
-    width: 70px; padding: 4px 6px; border: 1px solid #2c3e50; border-radius: 4px;
-    background: #1a1a2e; color: #eee; font-size: 0.85em;
+    width: 68px; padding: 5px 8px; border: 1px solid #1e1e3a; border-radius: 6px;
+    background: #0e0e1e; color: var(--text); font-size: 0.82em;
   }
 
   /* Waypoint table */
-  .wp-table-wrap { max-height: 250px; overflow-y: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
-  th { background: #0f3460; padding: 6px 8px; text-align: left; position: sticky; top: 0; }
-  td { padding: 5px 8px; border-bottom: 1px solid #2c3e50; }
-  tr.wp-done td { color: #2ecc71; }
-  tr.wp-navigating td { color: #3498db; }
-  tr.wp-collecting td { color: #f39c12; }
-  tr.wp-waiting td { color: #e67e22; }
-  tr.wp-pending td { color: #777; }
+  .wp-table-wrap { max-height: 280px; overflow-y: auto; }
+  .wp-table-wrap::-webkit-scrollbar { width: 4px; }
+  .wp-table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82em; }
+  th { background: var(--bg-header); padding: 8px 10px; text-align: left; position: sticky; top: 0; font-weight: 600; }
+  td { padding: 6px 10px; border-bottom: 1px solid #1a1a30; }
+  tr.wp-done td { color: var(--green); }
+  tr.wp-navigating td { color: var(--accent); }
+  tr.wp-collecting td { color: var(--yellow); }
+  tr.wp-waiting td { color: var(--orange); }
+  tr.wp-pending td { color: var(--text-muted); }
 
-  /* Heatmap section */
-  #heatmap-section { display: none; grid-column: 1 / -1; }
-  #heatmap-container { position: relative; width: 100%; background: #111; }
+  /* 3D panel */
+  #panel-3d-body { padding: 0; }
+  #iframe-placeholder {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 500px; color: var(--text-muted); font-size: 0.9em; gap: 16px;
+    background: radial-gradient(ellipse at center, #12122a 0%, #0b0b14 70%);
+  }
+  #iframe-placeholder .hint { font-size: 0.8em; opacity: 0.6; }
+  #sensor-3d-iframe { width: 100%; height: 600px; border: none; display: none; background: #fff; }
+  .gen-status { font-size: 0.78em; font-weight: 400; color: var(--text-muted); }
+
+  /* Heatmap */
+  #heatmap-section { display: none; }
+  #heatmap-container { position: relative; width: 100%; background: #080810; border-radius: 8px; overflow: hidden; }
   #heatmap-img { display: block; width: 100%; height: auto; opacity: 0; transition: opacity 0.3s; }
   #heatmap-img.loaded { opacity: 1; }
   #heatmap-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
   .legend-bar {
-    display: flex; align-items: center; gap: 8px; padding: 8px 0; font-size: 0.8em;
+    display: flex; align-items: center; gap: 10px; padding: 10px 0; font-size: 0.78em; color: var(--text-muted);
   }
   .legend-gradient {
-    flex: 1; height: 16px; border-radius: 3px;
-    background: linear-gradient(90deg, #2ecc71, #f1c40f, #e74c3c);
+    flex: 1; height: 12px; border-radius: 6px;
+    background: linear-gradient(90deg, #0000ff, #00ffff, #ffff00, #ff0000);
   }
 
-  /* Connection indicator */
-  .conn-dot {
-    display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px;
+  /* Connection dot */
+  .conn-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; }
+  .conn-dot.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .conn-dot.off { background: var(--red); }
+
+  /* Spinner */
+  .spinner {
+    width: 32px; height: 32px; border: 3px solid var(--border);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin 0.8s linear infinite;
   }
-  .conn-dot.on { background: #2ecc71; }
-  .conn-dot.off { background: #e74c3c; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* Full width panels */
-  .full-width { grid-column: 1 / -1; }
-
-  @media (max-width: 800px) {
-    .main-grid { grid-template-columns: 1fr; }
+  /* Responsive */
+  @media (max-width: 900px) {
+    .main-grid { grid-template-columns: 1fr; padding: 10px; gap: 10px; }
+    .tab-bar { padding: 0 10px; }
+    #sensor-3d-iframe { height: 400px; }
   }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>Go2 Patrol Monitor</h1>
-  <span id="status-badge">Connecting...</span>
+  <h1><span>Go2</span> Patrol Monitor</h1>
+  <div class="header-right">
+    <span id="status-badge">Connecting...</span>
+  </div>
 </header>
 
+<!-- Tabs -->
+<div class="tab-bar">
+  <button class="tab-btn active" onclick="switchTab('monitor')">Monitor</button>
+  <button class="tab-btn" onclick="switchTab('3d')">3D Visualization</button>
+  <button class="tab-btn" onclick="switchTab('heatmap')">2D Heatmap</button>
+</div>
+
+<!-- ============================================================= -->
+<!-- TAB: Monitor -->
+<!-- ============================================================= -->
+<div class="tab-content active" id="tab-monitor">
 <div class="main-grid">
 
   <!-- Floor Plan -->
@@ -181,12 +250,10 @@
         <button class="btn btn-next" id="btn-next" onclick="sendCmd('next')" disabled>Next Point</button>
         <button class="btn btn-stop" id="btn-stop" onclick="sendCmd('stop')">Emergency Stop</button>
       </div>
-      <div class="progress-section">
-        <div class="progress-bar-bg">
-          <div class="progress-bar-fill" id="progress-fill" style="width: 0%"></div>
-        </div>
-        <div class="progress-text" id="progress-text">Waiting to start...</div>
+      <div class="progress-bar-bg">
+        <div class="progress-bar-fill" id="progress-fill" style="width: 0%"></div>
       </div>
+      <div class="progress-text" id="progress-text">Waiting to start...</div>
     </div>
   </div>
 
@@ -221,7 +288,7 @@
         <input type="number" id="thresh-warn" value="600" onchange="saveThresholds()">
         <label>Danger &ge;</label>
         <input type="number" id="thresh-danger" value="600" disabled
-               style="background:transparent; border-color:#555;">
+               style="background:transparent; border-color:#1e1e3a;">
       </div>
     </div>
   </div>
@@ -239,9 +306,47 @@
     </div>
   </div>
 
-  <!-- Heatmap (shown after patrol) -->
+</div>
+</div>
+
+<!-- ============================================================= -->
+<!-- TAB: 3D Visualization -->
+<!-- ============================================================= -->
+<div class="tab-content" id="tab-3d">
+<div class="main-grid">
+  <div class="panel full-width">
+    <div class="panel-header">
+      3D Sensor Visualization
+      <div style="display:flex; align-items:center; gap:12px;">
+        <span class="gen-status" id="gen3d-status"></span>
+        <button class="btn btn-3d" id="btn-gen3d" onclick="generate3D()">Generate 3D View</button>
+      </div>
+    </div>
+    <div id="panel-3d-body">
+      <div id="iframe-placeholder">
+        <div class="spinner" id="gen-spinner" style="display:none;"></div>
+        <div id="placeholder-text">Click "Generate 3D View" to create an interactive visualization</div>
+        <div class="hint">Requires sensor_data.csv from a completed patrol</div>
+      </div>
+      <iframe id="sensor-3d-iframe" loading="lazy"></iframe>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ============================================================= -->
+<!-- TAB: 2D Heatmap -->
+<!-- ============================================================= -->
+<div class="tab-content" id="tab-heatmap">
+<div class="main-grid">
   <div class="panel full-width" id="heatmap-section">
-    <div class="panel-header">Sensor Heatmap</div>
+    <div class="panel-header">
+      2D Sensor Heatmap
+      <div style="display:flex; align-items:center; gap:12px;">
+        <span class="gen-status" id="gen2d-status"></span>
+        <button class="btn btn-3d" id="btn-gen2d" onclick="generate2DHeatmap()">Generate 2D Heatmap</button>
+      </div>
+    </div>
     <div class="panel-body">
       <div id="heatmap-container">
         <img id="heatmap-img" src="/api/floor_plan" alt=""
@@ -249,13 +354,16 @@
         <canvas id="heatmap-canvas"></canvas>
       </div>
       <div class="legend-bar">
-        <span>Safe</span>
+        <span>Low</span>
         <div class="legend-gradient"></div>
-        <span>Danger</span>
+        <span>High</span>
+      </div>
+      <div id="heatmap-empty" style="display:none; padding:50px; text-align:center; color:var(--text-muted);">
+        Complete a patrol to see heatmap data.
       </div>
     </div>
   </div>
-
+</div>
 </div>
 
 <script>
@@ -266,9 +374,88 @@ let waypoints = [];
 let latestState = null;
 let floorPlanImg = null;
 let mapCanvasReady = false;
-let mapViewport = null;  // {sx, sy, sw, sh} — source rect for auto-zoom
+let mapViewport = null;
+let displayAlign = null;
+let lastNavState = null;
 
-// ---- Thresholds (persisted in localStorage) ----
+function normalizeAngleRad(a) {
+  while (a > Math.PI) a -= 2 * Math.PI;
+  while (a < -Math.PI) a += 2 * Math.PI;
+  return a;
+}
+
+function resetDisplayAlignment() {
+  displayAlign = null;
+}
+
+function isAlignmentInitState(s) {
+  if (!s) return false;
+  if (!(s.nav_state === 'idle' || s.nav_state === 'standing_up')) return false;
+  if (!s.waypoint_statuses || s.waypoint_statuses.length === 0) return true;
+  return s.waypoint_statuses.every(st => st === 'pending');
+}
+
+function maybeInitDisplayAlignment(s) {
+  if (displayAlign) return;
+  if (!s || !s.position || !Array.isArray(waypoints) || waypoints.length === 0) return;
+  if (!isAlignmentInitState(s)) return;
+
+  const wp0 = waypoints[0];
+  if (!Number.isFinite(wp0.x) || !Number.isFinite(wp0.y)) return;
+
+  const startX = Number.isFinite(s.position.x) ? s.position.x : 0;
+  const startY = Number.isFinite(s.position.y) ? s.position.y : 0;
+  const startYaw = Number.isFinite(s.position.yaw) ? s.position.yaw : 0;
+  const baseYaw = Number.isFinite(wp0.yaw) ? wp0.yaw : startYaw;
+  const yawOffset = normalizeAngleRad(baseYaw - startYaw);
+
+  displayAlign = {
+    startX,
+    startY,
+    baseX: wp0.x,
+    baseY: wp0.y,
+    yawOffset,
+    cosA: Math.cos(yawOffset),
+    sinA: Math.sin(yawOffset),
+  };
+}
+
+function toDisplayPose(pose, stateForInit = null) {
+  if (!pose) return null;
+  if (!displayAlign && stateForInit) maybeInitDisplayAlignment(stateForInit);
+  if (!displayAlign) return pose;
+
+  const dx = pose.x - displayAlign.startX;
+  const dy = pose.y - displayAlign.startY;
+  return {
+    x: displayAlign.baseX + dx * displayAlign.cosA - dy * displayAlign.sinA,
+    y: displayAlign.baseY + dx * displayAlign.sinA + dy * displayAlign.cosA,
+    yaw: normalizeAngleRad(pose.yaw + displayAlign.yawOffset),
+  };
+}
+
+// ---- Tab switching ----
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    if ((name === 'monitor' && b.textContent === 'Monitor') ||
+        (name === '3d' && b.textContent === '3D Visualization') ||
+        (name === 'heatmap' && b.textContent === '2D Heatmap')) {
+      b.classList.add('active');
+    }
+  });
+  // Auto-check for existing 3D file when switching to tab
+  if (name === '3d') check3DExists();
+  // Load latest generated 2D heatmap when switching
+  if (name === 'heatmap') {
+    document.getElementById('heatmap-section').style.display = 'block';
+    check2DHeatmapExists();
+  }
+}
+
+// ---- Thresholds ----
 function loadThresholds() {
   const saved = localStorage.getItem('go2_thresholds');
   if (saved) {
@@ -293,18 +480,15 @@ function getThresholds() {
 }
 loadThresholds();
 
-// ---- Init: fetch map data ----
+// ---- Init ----
 async function init() {
   try {
     const [metaResp, wpResp] = await Promise.all([
-      fetch('/api/map_meta'),
-      fetch('/api/waypoints'),
+      fetch('/api/map_meta'), fetch('/api/waypoints'),
     ]);
     if (metaResp.ok) mapMeta = await metaResp.json();
     if (wpResp.ok) waypoints = await wpResp.json();
-  } catch(e) {
-    console.warn('Failed to load map data:', e);
-  }
+  } catch(e) { console.warn('Failed to load map data:', e); }
   connectWebSocket();
 }
 
@@ -314,54 +498,46 @@ function connectWebSocket() {
   ws = new WebSocket(`${proto}//${location.host}/ws`);
   ws.onopen = () => {
     document.getElementById('status-badge').textContent = 'Connected';
-    document.getElementById('status-badge').style.background = '#27ae60';
+    document.getElementById('status-badge').style.background = 'var(--green)';
   };
   ws.onclose = () => {
     document.getElementById('status-badge').textContent = 'Disconnected';
-    document.getElementById('status-badge').style.background = '#c0392b';
+    document.getElementById('status-badge').style.background = 'var(--red)';
     setTimeout(connectWebSocket, 2000);
   };
   ws.onmessage = (evt) => {
     const data = JSON.parse(evt.data);
-    if (data.type === 'state') {
-      latestState = data;
-      updateUI(data);
-    }
+    if (data.type === 'state') { latestState = data; updateUI(data); }
   };
 }
 
 function sendCmd(cmd) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({cmd}));
-  }
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({cmd}));
 }
 
 // ---- UI Update ----
 function updateUI(s) {
-  // Status badge
-  const badge = document.getElementById('status-badge');
-  const stateLabels = {
-    idle: 'Idle', standing_up: 'Standing Up', navigating: 'Navigating',
-    collecting: 'Collecting', waiting: 'Waiting', done: 'Complete', error: 'Error',
-  };
-  const stateColors = {
-    idle: '#555', standing_up: '#f39c12', navigating: '#2980b9',
-    collecting: '#8e44ad', waiting: '#e67e22', done: '#27ae60', error: '#c0392b',
-  };
-  badge.textContent = stateLabels[s.nav_state] || s.nav_state;
-  badge.style.background = stateColors[s.nav_state] || '#555';
+  if (lastNavState !== s.nav_state && s.nav_state === 'standing_up') {
+    resetDisplayAlignment();
+  }
+  maybeInitDisplayAlignment(s);
+  const displayPose = toDisplayPose(s.position, s) || s.position;
+  lastNavState = s.nav_state;
 
-  // Buttons
-  const isIdle = s.nav_state === 'idle' || s.nav_state === 'done' || s.nav_state === 'error';
+  const badge = document.getElementById('status-badge');
+  const labels = { idle:'Idle', standing_up:'Standing Up', navigating:'Navigating', collecting:'Collecting', waiting:'Waiting', done:'Complete', error:'Error' };
+  const colors = { idle:'#444', standing_up:'var(--yellow)', navigating:'var(--accent)', collecting:'var(--purple)', waiting:'var(--orange)', done:'var(--green)', error:'var(--red)' };
+  badge.textContent = labels[s.nav_state] || s.nav_state;
+  badge.style.background = colors[s.nav_state] || '#444';
+
+  const isIdle = ['idle','done','error'].includes(s.nav_state);
   document.getElementById('btn-start').disabled = !isIdle;
   document.getElementById('btn-next').disabled = s.nav_state !== 'waiting';
 
-  // Position
-  document.getElementById('val-x').textContent = s.position.x.toFixed(3);
-  document.getElementById('val-y').textContent = s.position.y.toFixed(3);
-  document.getElementById('val-yaw').textContent = (s.position.yaw * 180 / Math.PI).toFixed(1) + '\u00b0';
+  document.getElementById('val-x').textContent = displayPose.x.toFixed(3);
+  document.getElementById('val-y').textContent = displayPose.y.toFixed(3);
+  document.getElementById('val-yaw').textContent = (displayPose.yaw * 180 / Math.PI).toFixed(1) + '\u00b0';
 
-  // Sensor
   const sensorDot = document.getElementById('sensor-dot');
   sensorDot.className = 'conn-dot ' + (s.sensor_connected ? 'on' : 'off');
   const sItem = document.getElementById('sensor-item');
@@ -369,63 +545,42 @@ function updateUI(s) {
   if (s.sensor_value != null) {
     valSensor.textContent = s.sensor_value.toFixed(1);
     const t = getThresholds();
-    sItem.className = 'data-item ' + (
-      s.sensor_value < t.safe ? 'sensor-safe' :
-      s.sensor_value < t.warn ? 'sensor-warn' : 'sensor-danger'
-    );
-  } else {
-    valSensor.textContent = 'N/A';
-    sItem.className = 'data-item';
-  }
+    sItem.className = 'data-item ' + (s.sensor_value < t.safe ? 'sensor-safe' : s.sensor_value < t.warn ? 'sensor-warn' : 'sensor-danger');
+  } else { valSensor.textContent = 'N/A'; sItem.className = 'data-item'; }
 
-  // Progress
   const total = s.total_waypoints || 0;
   const done = s.waypoint_statuses ? s.waypoint_statuses.filter(x => x === 'done').length : 0;
   const pct = total > 0 ? (done / total * 100) : 0;
   document.getElementById('progress-fill').style.width = pct + '%';
-  const progressText = document.getElementById('progress-text');
-  if (s.nav_state === 'idle') progressText.textContent = 'Waiting to start...';
-  else if (s.nav_state === 'done') progressText.textContent = `Complete! ${done}/${total} waypoints collected.`;
-  else if (s.nav_state === 'error') progressText.textContent = `Error: ${s.error}`;
-  else progressText.textContent = `Waypoint ${s.current_waypoint + 1} of ${total} (${done} collected)`;
+  const pt = document.getElementById('progress-text');
+  if (s.nav_state === 'idle') pt.textContent = 'Waiting to start...';
+  else if (s.nav_state === 'done') pt.textContent = `Complete! ${done}/${total} waypoints.`;
+  else if (s.nav_state === 'error') pt.textContent = `Error: ${s.error}`;
+  else pt.textContent = `Waypoint ${s.current_waypoint + 1} / ${total} (${done} done)`;
 
-  // Waypoint table
   updateWaypointTable(s);
-
-  // Map canvas
   if (mapCanvasReady) drawMap(s);
-
-  // Heatmap
-  if (s.nav_state === 'done' && s.sensor_log && s.sensor_log.length > 0) {
-    document.getElementById('heatmap-section').style.display = 'block';
-    drawHeatmap(s.sensor_log);
-  }
 }
 
 function updateWaypointTable(s) {
   const tbody = document.getElementById('wp-tbody');
   const total = s.total_waypoints || waypoints.length;
-  if (total === 0 && tbody.children.length === 0) {
-    // Build initial table from loaded waypoints
-    if (waypoints.length > 0) {
-      let html = '';
-      for (let i = 0; i < waypoints.length; i++) {
-        const wp = waypoints[i];
-        html += `<tr class="wp-pending"><td>${i+1}</td><td>(${wp.x.toFixed(2)}, ${wp.y.toFixed(2)})</td><td>--</td><td>pending</td></tr>`;
-      }
-      tbody.innerHTML = html;
+  if (total === 0 && tbody.children.length === 0 && waypoints.length > 0) {
+    let html = '';
+    for (let i = 0; i < waypoints.length; i++) {
+      const wp = waypoints[i];
+      html += `<tr class="wp-pending"><td>${i+1}</td><td>(${wp.x.toFixed(2)}, ${wp.y.toFixed(2)})</td><td>--</td><td>pending</td></tr>`;
     }
+    tbody.innerHTML = html;
     return;
   }
-
-  // Rebuild from state
   let html = '';
   for (let i = 0; i < total; i++) {
     const status = (s.waypoint_statuses && s.waypoint_statuses[i]) || 'pending';
-    const wp = waypoints[i] || {x: 0, y: 0};
-    const logEntry = s.sensor_log ? s.sensor_log.find(e => e.waypoint === i + 1) : null;
-    const sensorVal = logEntry && logEntry.sensor_value !== '' ? parseFloat(logEntry.sensor_value).toFixed(1) : '--';
-    html += `<tr class="wp-${status}"><td>${i+1}</td><td>(${wp.x.toFixed(2)}, ${wp.y.toFixed(2)})</td><td>${sensorVal}</td><td>${status}</td></tr>`;
+    const wp = waypoints[i] || {x:0, y:0};
+    const log = s.sensor_log ? s.sensor_log.find(e => e.waypoint === i + 1) : null;
+    const sv = log && log.sensor_value !== '' ? parseFloat(log.sensor_value).toFixed(1) : '--';
+    html += `<tr class="wp-${status}"><td>${i+1}</td><td>(${wp.x.toFixed(2)}, ${wp.y.toFixed(2)})</td><td>${sv}</td><td>${status}</td></tr>`;
   }
   tbody.innerHTML = html;
 }
@@ -438,152 +593,251 @@ function initMapCanvas() {
   canvas.width = img.naturalWidth;
   canvas.height = img.naturalHeight;
   document.getElementById('map-no-data').style.display = 'none';
-
-  // Compute viewport: center on route, trim 10% from each edge of the full image
   mapViewport = null;
   if (waypoints.length > 0 && mapMeta) {
-    // Find route center in image pixel coords
     let sumX = 0, sumY = 0;
     for (const wp of waypoints) {
-      const gx = (wp.x - mapMeta.origin_x) / mapMeta.resolution;
-      const gy = (wp.y - mapMeta.origin_y) / mapMeta.resolution;
-      const gyFlipped = mapMeta.height - 1 - gy;
-      sumX += (gx / mapMeta.width) * img.naturalWidth;
-      sumY += (gyFlipped / mapMeta.height) * img.naturalHeight;
+      sumX += ((wp.x - mapMeta.origin_x) / mapMeta.resolution / mapMeta.width) * img.naturalWidth;
+      sumY += ((mapMeta.height - 1 - (wp.y - mapMeta.origin_y) / mapMeta.resolution) / mapMeta.height) * img.naturalHeight;
     }
-    const cx = sumX / waypoints.length;
-    const cy = sumY / waypoints.length;
-    // Viewport = 80% of full image, centered on route center
-    const sw = img.naturalWidth * 0.8;
-    const sh = img.naturalHeight * 0.8;
-    let sx = cx - sw / 2;
-    let sy = cy - sh / 2;
-    // Clamp to image bounds
-    sx = Math.max(0, Math.min(sx, img.naturalWidth - sw));
-    sy = Math.max(0, Math.min(sy, img.naturalHeight - sh));
+    const cx = sumX / waypoints.length, cy = sumY / waypoints.length;
+    const sw = img.naturalWidth * 0.8, sh = img.naturalHeight * 0.8;
+    let sx = Math.max(0, Math.min(cx - sw/2, img.naturalWidth - sw));
+    let sy = Math.max(0, Math.min(cy - sh/2, img.naturalHeight - sh));
     mapViewport = {sx, sy, sw, sh};
   }
-
   mapCanvasReady = true;
   if (latestState) drawMap(latestState);
 }
 
 function worldToCanvas(wx, wy, canvas) {
-  if (!mapMeta) return null;
+  if (!mapMeta || !floorPlanImg) return null;
   const img = floorPlanImg;
-  if (!img) return null;
-
-  // World coords to image pixel coords
   const gx = (wx - mapMeta.origin_x) / mapMeta.resolution;
   const gy = (wy - mapMeta.origin_y) / mapMeta.resolution;
-  const gyFlipped = mapMeta.height - 1 - gy;
+  const gyF = mapMeta.height - 1 - gy;
   const imgX = (gx / mapMeta.width) * img.naturalWidth;
-  const imgY = (gyFlipped / mapMeta.height) * img.naturalHeight;
-
-  // Apply viewport (auto-zoom) if set
+  const imgY = (gyF / mapMeta.height) * img.naturalHeight;
   if (mapViewport) {
-    const cx = ((imgX - mapViewport.sx) / mapViewport.sw) * canvas.width;
-    const cy = ((imgY - mapViewport.sy) / mapViewport.sh) * canvas.height;
-    return {x: cx, y: cy};
+    return { x: ((imgX - mapViewport.sx) / mapViewport.sw) * canvas.width,
+             y: ((imgY - mapViewport.sy) / mapViewport.sh) * canvas.height };
   }
-
-  // Full image (no zoom)
-  const scaleX = canvas.width / img.naturalWidth;
-  const scaleY = canvas.height / img.naturalHeight;
-  return {x: imgX * scaleX, y: imgY * scaleY};
+  return { x: imgX * (canvas.width / img.naturalWidth), y: imgY * (canvas.height / img.naturalHeight) };
 }
 
 function drawMap(s) {
   const canvas = document.getElementById('map-canvas');
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  // Draw floor plan image (zoomed to viewport if set)
   if (floorPlanImg && floorPlanImg.naturalWidth > 0) {
-    if (mapViewport) {
-      ctx.drawImage(floorPlanImg,
-        mapViewport.sx, mapViewport.sy, mapViewport.sw, mapViewport.sh,
-        0, 0, canvas.width, canvas.height);
-    } else {
-      ctx.drawImage(floorPlanImg, 0, 0, canvas.width, canvas.height);
-    }
+    if (mapViewport) ctx.drawImage(floorPlanImg, mapViewport.sx, mapViewport.sy, mapViewport.sw, mapViewport.sh, 0, 0, canvas.width, canvas.height);
+    else ctx.drawImage(floorPlanImg, 0, 0, canvas.width, canvas.height);
   }
-
   if (!mapMeta) return;
 
-  // Draw waypoint route path
+  // Route path
   if (waypoints.length > 1) {
-    ctx.beginPath();
-    ctx.strokeStyle = 'rgba(52, 152, 219, 0.5)';
-    ctx.lineWidth = 2;
-    for (let i = 0; i < waypoints.length; i++) {
-      const p = worldToCanvas(waypoints[i].x, waypoints[i].y, canvas);
-      if (!p) continue;
-      if (i === 0) ctx.moveTo(p.x, p.y);
-      else ctx.lineTo(p.x, p.y);
-    }
+    ctx.beginPath(); ctx.strokeStyle = 'rgba(79,140,255,0.4)'; ctx.lineWidth = 2;
+    waypoints.forEach((wp, i) => { const p = worldToCanvas(wp.x, wp.y, canvas); if (!p) return; i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y); });
     ctx.stroke();
   }
 
-  // Draw waypoint markers
-  for (let i = 0; i < waypoints.length; i++) {
-    const wp = waypoints[i];
-    const p = worldToCanvas(wp.x, wp.y, canvas);
-    if (!p) continue;
-
+  // Waypoint markers
+  waypoints.forEach((wp, i) => {
+    const p = worldToCanvas(wp.x, wp.y, canvas); if (!p) return;
     const status = (s.waypoint_statuses && s.waypoint_statuses[i]) || 'pending';
-    const colors = {
-      pending: '#777', navigating: '#3498db', collecting: '#9b59b6',
-      waiting: '#e67e22', done: '#2ecc71',
-    };
-
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 8, 0, 2 * Math.PI);
-    ctx.fillStyle = colors[status] || '#777';
-    ctx.fill();
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-
-    // Number label
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 9px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    const c = { pending:'#555', navigating:'#4f8cff', collecting:'#a855f7', waiting:'#f97316', done:'#22c55e' };
+    ctx.beginPath(); ctx.arc(p.x, p.y, 8, 0, 2*Math.PI);
+    ctx.fillStyle = c[status] || '#555'; ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(i + 1, p.x, p.y);
-  }
+  });
 
-  // Draw robot position
-  const rp = worldToCanvas(s.position.x, s.position.y, canvas);
+  // Robot
+  const displayPose = toDisplayPose(s.position, s) || s.position;
+  const rp = worldToCanvas(displayPose.x, displayPose.y, canvas);
   if (rp) {
-    const yaw = s.position.yaw;
-    const size = 12;
-    ctx.save();
-    ctx.translate(rp.x, rp.y);
-    // Note: canvas Y is flipped relative to world Y, so negate yaw for display
-    ctx.rotate(-yaw);
-    ctx.beginPath();
-    ctx.moveTo(size, 0);
-    ctx.lineTo(-size * 0.6, -size * 0.5);
-    ctx.lineTo(-size * 0.6, size * 0.5);
-    ctx.closePath();
-
-    const robotColors = {
-      idle: '#95a5a6', navigating: '#2ecc71', collecting: '#f39c12',
-      waiting: '#e67e22', done: '#27ae60', error: '#e74c3c', standing_up: '#f39c12',
-    };
-    ctx.fillStyle = robotColors[s.nav_state] || '#2ecc71';
-    ctx.fill();
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.restore();
+    ctx.save(); ctx.translate(rp.x, rp.y); ctx.rotate(-displayPose.yaw);
+    ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(-7, -6); ctx.lineTo(-7, 6); ctx.closePath();
+    const rc = { idle:'#888', navigating:'#22c55e', collecting:'#eab308', waiting:'#f97316', done:'#22c55e', error:'#ef4444', standing_up:'#eab308' };
+    ctx.fillStyle = rc[s.nav_state] || '#22c55e'; ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke(); ctx.restore();
   }
 }
 
-// ---- Heatmap ----
+// ---- 3D Generation ----
+let gen3dPolling = null;
+
+async function check3DExists() {
+  try {
+    const r = await fetch('/api/3d_status');
+    const d = await r.json();
+    if (d.status === 'ready') load3DIframe();
+    // Also check if file exists from a previous session
+    const r2 = await fetch('/api/sensor_3d', {method: 'HEAD'});
+    if (r2.ok) load3DIframe();
+  } catch(e) {}
+}
+
+function load3DIframe() {
+  const iframe = document.getElementById('sensor-3d-iframe');
+  if (iframe.style.display === 'block') return; // already loaded
+  iframe.src = '/api/sensor_3d?t=' + Date.now();
+  iframe.style.display = 'block';
+  document.getElementById('iframe-placeholder').style.display = 'none';
+}
+
+async function generate3D() {
+  const btn = document.getElementById('btn-gen3d');
+  const status = document.getElementById('gen3d-status');
+  const spinner = document.getElementById('gen-spinner');
+  const text = document.getElementById('placeholder-text');
+
+  btn.disabled = true;
+  status.textContent = 'Generating...';
+  spinner.style.display = 'block';
+  text.textContent = 'Building 3D visualization...';
+
+  try {
+    const resp = await fetch('/api/generate_3d', {method: 'POST'});
+    const data = await resp.json();
+    if (data.status === 'already_running') {
+      status.textContent = 'Already generating...';
+      return;
+    }
+  } catch(e) {
+    status.textContent = 'Request failed';
+    btn.disabled = false;
+    spinner.style.display = 'none';
+    return;
+  }
+
+  // Poll for completion
+  if (gen3dPolling) clearInterval(gen3dPolling);
+  gen3dPolling = setInterval(async () => {
+    try {
+      const r = await fetch('/api/3d_status');
+      const d = await r.json();
+      if (d.status === 'ready') {
+        clearInterval(gen3dPolling);
+        gen3dPolling = null;
+        status.textContent = 'Ready';
+        btn.disabled = false;
+        spinner.style.display = 'none';
+        load3DIframe();
+      } else if (d.status === 'error') {
+        clearInterval(gen3dPolling);
+        gen3dPolling = null;
+        status.textContent = 'Error: ' + d.message;
+        btn.disabled = false;
+        spinner.style.display = 'none';
+        text.textContent = 'Generation failed. Check server logs.';
+      }
+    } catch(e) {}
+  }, 1500);
+}
+
+// ---- 2D Heatmap ----
 let heatmapCanvasReady = false;
 let heatmapFloorImg = null;
+let gen2dPolling = null;
+
+function clearHeatmapCanvas() {
+  if (!heatmapCanvasReady) return;
+  const canvas = document.getElementById('heatmap-canvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+function load2DHeatmapImage() {
+  const img = document.getElementById('heatmap-img');
+  const canvas = document.getElementById('heatmap-canvas');
+  canvas.style.display = 'none';
+  img.src = '/api/sensor_heatmap_2d?t=' + Date.now();
+  document.getElementById('heatmap-empty').style.display = 'none';
+  document.getElementById('heatmap-section').style.display = 'block';
+}
+
+async function check2DHeatmapExists() {
+  try {
+    const r = await fetch('/api/2d_status');
+    if (r.ok) {
+      const d = await r.json();
+      if (d.status === 'ready') {
+        load2DHeatmapImage();
+        return;
+      }
+    }
+    const r2 = await fetch('/api/sensor_heatmap_2d', {method: 'HEAD'});
+    if (r2.ok) {
+      load2DHeatmapImage();
+      return;
+    }
+  } catch (e) {}
+
+  const canvas = document.getElementById('heatmap-canvas');
+  canvas.style.display = 'none';
+  clearHeatmapCanvas();
+  document.getElementById('heatmap-empty').style.display = 'block';
+}
+
+function stop2DStatusPolling() {
+  if (gen2dPolling) {
+    clearInterval(gen2dPolling);
+    gen2dPolling = null;
+  }
+}
+
+async function generate2DHeatmap() {
+  const btn = document.getElementById('btn-gen2d');
+  const status = document.getElementById('gen2d-status');
+  const empty = document.getElementById('heatmap-empty');
+
+  btn.disabled = true;
+  status.textContent = 'Generating...';
+  empty.style.display = 'none';
+
+  try {
+    const resp = await fetch('/api/generate_2d', {method: 'POST'});
+    if (!resp.ok) {
+      throw new Error('generate_2d failed (' + resp.status + ')');
+    }
+    const data = await resp.json();
+    if (data.status === 'already_running') {
+      status.textContent = 'Already generating...';
+    }
+  } catch (e) {
+    status.textContent = 'Request failed';
+    console.warn('Generate 2D heatmap request failed:', e);
+    btn.disabled = false;
+    return;
+  }
+
+  stop2DStatusPolling();
+  gen2dPolling = setInterval(async () => {
+    try {
+      const r = await fetch('/api/2d_status');
+      const d = await r.json();
+      if (d.status === 'ready') {
+        stop2DStatusPolling();
+        load2DHeatmapImage();
+        status.textContent = 'Ready';
+        btn.disabled = false;
+      } else if (d.status === 'error') {
+        stop2DStatusPolling();
+        status.textContent = 'Error: ' + d.message;
+        empty.style.display = 'block';
+        btn.disabled = false;
+      }
+    } catch (e) {
+      stop2DStatusPolling();
+      status.textContent = 'Generate failed';
+      empty.style.display = 'block';
+      btn.disabled = false;
+    }
+  }, 1200);
+}
 
 function initHeatmapCanvas() {
   const img = document.getElementById('heatmap-img');
@@ -592,110 +846,10 @@ function initHeatmapCanvas() {
   canvas.width = img.naturalWidth;
   canvas.height = img.naturalHeight;
   heatmapCanvasReady = true;
-  if (latestState && latestState.sensor_log) drawHeatmap(latestState.sensor_log);
+  canvas.style.display = 'none';
 }
 
-function sensorToColor(value, vmin, vmax) {
-  let t = (vmax === vmin) ? 0.5 : (value - vmin) / (vmax - vmin);
-  t = Math.max(0, Math.min(1, t));
-  const thresh = getThresholds();
-  const tSafe = (vmax === vmin) ? 0.33 : (thresh.safe - vmin) / (vmax - vmin);
-  const tWarn = (vmax === vmin) ? 0.66 : (thresh.warn - vmin) / (vmax - vmin);
-
-  // Green -> Yellow -> Red
-  let r, g, b;
-  if (t < 0.5) {
-    r = Math.round(t * 2 * 255);
-    g = Math.round(255 - t * 0.5 * 255);
-    b = Math.round((1 - t * 2) * 100);
-  } else {
-    r = 255;
-    g = Math.round((1 - (t - 0.5) * 2) * 200);
-    b = 0;
-  }
-  return `rgb(${r},${g},${b})`;
-}
-
-function drawHeatmap(sensorLog) {
-  if (!heatmapCanvasReady || !mapMeta) return;
-  const canvas = document.getElementById('heatmap-canvas');
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  const values = sensorLog.filter(e => e.sensor_value !== '').map(e => parseFloat(e.sensor_value));
-  if (values.length === 0) return;
-  const vmin = Math.min(...values);
-  const vmax = Math.max(...values);
-
-  // Draw route path
-  if (waypoints.length > 1) {
-    ctx.beginPath();
-    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-    ctx.lineWidth = 2;
-    ctx.setLineDash([6, 4]);
-    for (let i = 0; i < waypoints.length; i++) {
-      const p = heatmapWorldToCanvas(waypoints[i].x, waypoints[i].y);
-      if (!p) continue;
-      if (i === 0) ctx.moveTo(p.x, p.y);
-      else ctx.lineTo(p.x, p.y);
-    }
-    ctx.stroke();
-    ctx.setLineDash([]);
-  }
-
-  // Draw sensor dots
-  for (const entry of sensorLog) {
-    if (entry.sensor_value === '') continue;
-    const wp = waypoints[entry.waypoint - 1];
-    if (!wp) continue;
-    const p = heatmapWorldToCanvas(wp.x, wp.y);
-    if (!p) continue;
-    const val = parseFloat(entry.sensor_value);
-    const color = sensorToColor(val, vmin, vmax);
-
-    // Outer glow
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 18, 0, 2 * Math.PI);
-    ctx.fillStyle = color.replace('rgb', 'rgba').replace(')', ',0.25)');
-    ctx.fill();
-
-    // Main dot
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 10, 0, 2 * Math.PI);
-    ctx.fillStyle = color;
-    ctx.fill();
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    // Value label
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 9px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(val.toFixed(0), p.x, p.y);
-  }
-}
-
-function heatmapWorldToCanvas(wx, wy) {
-  if (!mapMeta || !heatmapFloorImg) return null;
-  const img = heatmapFloorImg;
-  const gx = (wx - mapMeta.origin_x) / mapMeta.resolution;
-  const gy = (wy - mapMeta.origin_y) / mapMeta.resolution;
-  const gyFlipped = mapMeta.height - 1 - gy;
-  const plotLeft = 0.125 * img.naturalWidth;
-  const plotRight = 0.95 * img.naturalWidth;
-  const plotTop = 0.07 * img.naturalHeight;
-  const plotBottom = 0.90 * img.naturalHeight;
-  const plotW = plotRight - plotLeft;
-  const plotH = plotBottom - plotTop;
-  return {
-    x: plotLeft + (gx / mapMeta.width) * plotW,
-    y: plotTop + (gyFlipped / mapMeta.height) * plotH,
-  };
-}
-
-// ---- Init ----
+// ---- Boot ----
 init();
 </script>
 </body>

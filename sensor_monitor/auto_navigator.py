@@ -27,6 +27,8 @@ import json
 import csv
 import socket
 import threading
+import shutil
+from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -41,9 +43,15 @@ class AutoNavigator:
     def __init__(self, network_interface="enp0s2",
                  sensor_host="192.168.123.18", sensor_port=9876,
                  bridge_host=None, bridge_port=9877,
-                 no_sensor=False):
+                 no_sensor=False,
+                 save_history=True,
+                 rotate_tolerance=0.05, move_tolerance=0.05):
         self._bridge_mode = bridge_host is not None
         self._bridge_client = None
+
+        # Navigation tolerances
+        self.rotate_tolerance = rotate_tolerance
+        self.move_tolerance = move_tolerance
 
         # Position tracking
         self.current_x = 0.0
@@ -58,6 +66,7 @@ class AutoNavigator:
 
         # Sensor data log
         self.sensor_log = []
+        self.save_history = save_history
 
         # Navigation state (for web mode)
         self.nav_state = "idle"          # idle|standing_up|navigating|collecting|waiting|done|error
@@ -210,8 +219,8 @@ class AutoNavigator:
         """Check if emergency stop was requested."""
         return self._stop_event.is_set()
 
-    def rotate_to_target(self, target_x, target_y, tolerance=0.25, timeout=30.0):
-        """Rotate to face target point using SportClient.Move."""
+    def rotate_to_target(self, target_x, target_y, tolerance=0.05, timeout=30.0):
+        """Rotate to face target point using P-control with damping."""
         print("  Rotating to face target...")
 
         target_yaw = self.angle_to(target_x, target_y)
@@ -221,6 +230,7 @@ class AutoNavigator:
         iteration = 0
         last_progress_check_time = start_time
         last_yaw_error = None
+        prev_yaw_error = None
 
         while True:
             if self._is_stopped():
@@ -241,7 +251,7 @@ class AutoNavigator:
 
             # Stuck detection
             if time.time() - last_progress_check_time > 5.0:
-                if last_yaw_error is not None and abs(abs(yaw_error) - abs(last_yaw_error)) < 0.05:
+                if last_yaw_error is not None and abs(abs(yaw_error) - abs(last_yaw_error)) < 0.02:
                     print(f"    [Rotate] No progress, skipping (error: {math.degrees(yaw_error):.1f})")
                     break
                 last_yaw_error = abs(yaw_error)
@@ -251,10 +261,19 @@ class AutoNavigator:
                 print(f"    [Rotate] Timeout! Error: {math.degrees(yaw_error):.1f}")
                 break
 
-            if abs(yaw_error) < 0.05:
+            # PD control: proportional + derivative damping
+            Kp = 2.0
+            Kd = 0.3
+            vyaw = Kp * yaw_error
+            if prev_yaw_error is not None:
+                d_error = (yaw_error - prev_yaw_error) / 0.02
+                vyaw += Kd * d_error
+            prev_yaw_error = yaw_error
+            # Clamp to safe range
+            vyaw = max(min(vyaw, 0.8), -0.8)
+            # Dead zone: stop if error is tiny to avoid jitter
+            if abs(yaw_error) < 0.02:
                 vyaw = 0
-            else:
-                vyaw = 0.8 if yaw_error > 0 else -0.8
             self.sport_client.Move(0, 0, vyaw)
             time.sleep(0.02)
             iteration += 1
@@ -262,8 +281,8 @@ class AutoNavigator:
         self.sport_client.StopMove()
         time.sleep(0.3)
 
-    def move_forward_to_target(self, target_x, target_y, tolerance=0.25, speed=0.3, timeout=60.0):
-        """Move forward to target with P-control steering."""
+    def move_forward_to_target(self, target_x, target_y, tolerance=0.05, speed=0.3, timeout=60.0):
+        """Move forward to target with PD-control steering and smooth deceleration."""
         print("  Moving forward...")
 
         start_time = time.time()
@@ -271,6 +290,7 @@ class AutoNavigator:
         last_x, last_y = None, None
         last_progress_time = None
         stuck_counter = 0
+        prev_yaw_error = None
 
         while self.distance_to(target_x, target_y) > tolerance:
             if self._is_stopped():
@@ -281,22 +301,22 @@ class AutoNavigator:
             distance = self.distance_to(target_x, target_y)
 
             if iteration % 50 == 0:
-                print(f"    [Move] pos=({x:.2f}, {y:.2f}), dist={distance:.2f}m")
+                print(f"    [Move] pos=({x:.2f}, {y:.2f}), dist={distance:.3f}m")
 
             if time.time() - start_time > timeout:
-                print(f"    [Move] Timeout! Distance: {distance:.2f}m")
+                print(f"    [Move] Timeout! Distance: {distance:.3f}m")
                 break
 
-            # Stuck detection: check every 2s if robot moved at least 5cm
+            # Stuck detection: check every 2s if robot moved at least 2cm
             if last_x is None:
                 last_x, last_y = x, y
                 last_progress_time = time.time()
             elif time.time() - last_progress_time > 2.0:
                 position_change = math.sqrt((x - last_x)**2 + (y - last_y)**2)
-                if position_change < 0.05:
+                if position_change < 0.02:
                     stuck_counter += 1
                     if stuck_counter >= 3:  # 6 seconds of no real progress
-                        print(f"    [Move] Stuck, accepting position (dist: {distance:.2f}m)")
+                        print(f"    [Move] Stuck, accepting position (dist: {distance:.3f}m)")
                         break
                 else:
                     stuck_counter = 0
@@ -306,9 +326,22 @@ class AutoNavigator:
             target_yaw = self.angle_to(target_x, target_y)
             yaw_error = self.normalize_angle(target_yaw - yaw)
 
-            vx = min(speed, distance * 0.8)
-            vx = max(vx, 0.15)
-            vyaw = max(min(yaw_error * 0.8, 0.3), -0.3)
+            # Smooth deceleration: slow down proportionally as we approach
+            vx = min(speed, distance * 1.0)
+            vx = max(vx, 0.08)
+            # Extra slow for final approach
+            if distance < 0.15:
+                vx = min(vx, 0.08)
+
+            # PD steering control
+            Kp_steer = 1.2
+            Kd_steer = 0.2
+            vyaw = Kp_steer * yaw_error
+            if prev_yaw_error is not None:
+                d_error = (yaw_error - prev_yaw_error) / 0.02
+                vyaw += Kd_steer * d_error
+            prev_yaw_error = yaw_error
+            vyaw = max(min(vyaw, 0.4), -0.4)
 
             self.sport_client.Move(vx, 0, vyaw)
             time.sleep(0.02)
@@ -317,19 +350,19 @@ class AutoNavigator:
         self.sport_client.StopMove()
         print(f"    [Move] Complete! Final dist: {self.distance_to(target_x, target_y):.3f}m")
 
-    def move_to_point(self, target_x, target_y, tolerance=0.25):
+    def move_to_point(self, target_x, target_y, rotate_tolerance=0.05, move_tolerance=0.05):
         """Two-phase navigation: rotate then move forward."""
         x, y, _ = self.get_position()
         print(f"  Current: ({x:.2f}, {y:.2f}), Target: ({target_x:.2f}, {target_y:.2f})")
 
-        if self.distance_to(target_x, target_y) < tolerance:
+        if self.distance_to(target_x, target_y) < move_tolerance:
             print("  Already at target!")
             return
 
-        self.rotate_to_target(target_x, target_y)
+        self.rotate_to_target(target_x, target_y, tolerance=rotate_tolerance)
         if self._is_stopped():
             return
-        self.move_forward_to_target(target_x, target_y, tolerance)
+        self.move_forward_to_target(target_x, target_y, tolerance=move_tolerance)
         if not self._is_stopped():
             print("  Arrived!")
 
@@ -376,6 +409,20 @@ class AutoNavigator:
             writer.writerows(self.sensor_log)
 
         print(f"Saved {len(self.sensor_log)} data points to {csv_path}")
+
+        if not self.save_history:
+            return
+
+        # Keep a per-run historical snapshot with timestamp.
+        history_dir = os.path.join(DATA_DIR, "history_data")
+        os.makedirs(history_dir, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        history_path = os.path.join(history_dir, f"{ts}_sensor_data.csv")
+        try:
+            shutil.copy2(csv_path, history_path)
+            print(f"Saved history snapshot to {history_path}")
+        except OSError as e:
+            print(f"WARNING: Failed to save history snapshot: {e}")
 
     def load_waypoints(self):
         """Load waypoints from JSON file."""
@@ -497,7 +544,9 @@ class AutoNavigator:
                 self.waypoint_statuses[i] = "navigating"
                 print(f"\n>>> Waypoint {i+1}/{len(waypoints)}: ({target_x:.3f}, {target_y:.3f})")
 
-                self.move_to_point(target_x, target_y)
+                self.move_to_point(target_x, target_y,
+                                   rotate_tolerance=self.rotate_tolerance,
+                                   move_tolerance=self.move_tolerance)
 
                 if self._is_stopped():
                     break
@@ -618,7 +667,9 @@ class AutoNavigator:
                     target_x, target_y = wp[0], wp[1]
                     print(f"\n>>> Waypoint {i+1}/{len(waypoints)}: ({target_x:.3f}, {target_y:.3f})")
 
-                    self.move_to_point(target_x, target_y)
+                    self.move_to_point(target_x, target_y,
+                                   rotate_tolerance=self.rotate_tolerance,
+                                   move_tolerance=self.move_tolerance)
 
                     # Log sensor data at this waypoint
                     time.sleep(1)  # brief pause for sensor reading to stabilize
@@ -674,6 +725,12 @@ if __name__ == "__main__":
                         help="Sensor bridge TCP port (default: 9876)")
     parser.add_argument("--no-sensor", action="store_true",
                         help="Skip sensor connection entirely")
+    parser.add_argument("--no-history", action="store_true",
+                        help="Do not save timestamped history CSV copies")
+    parser.add_argument("--rotate-tolerance", type=float, default=0.05,
+                        help="Rotation tolerance in radians (default: 0.05, ~3 deg)")
+    parser.add_argument("--move-tolerance", type=float, default=0.05,
+                        help="Move-to-point tolerance in meters (default: 0.05, 5cm)")
     parser.add_argument("--video-port", type=int, default=9878,
                         help="Video relay TCP port on bridge host (default: 9878)")
     parser.add_argument("--web", action="store_true",
@@ -687,7 +744,10 @@ if __name__ == "__main__":
                           sensor_port=args.sensor_port,
                           bridge_host=args.bridge,
                           bridge_port=args.bridge_port,
-                          no_sensor=args.no_sensor)
+                          no_sensor=args.no_sensor,
+                          save_history=not args.no_history,
+                          rotate_tolerance=args.rotate_tolerance,
+                          move_tolerance=args.move_tolerance)
 
     if args.web:
         from web_server import run_web_server

@@ -46,11 +46,9 @@ biscuit-movements-unitree-go2/
 go2_webrtc_connect-*
 sensor_monitor/test_wifi.py
 
+# Claude Code
+.claude/
+
 # Sensor monitor data (large files - see README for download link)
-sensor_monitor/data/*.ply
-sensor_monitor/data/*.ply.bak
-sensor_monitor/data/*.npy
-sensor_monitor/data/*.npy.bak
-sensor_monitor/data/*.bak
-sensor_monitor/data/*.png
-sensor_monitor/data/*.csv
+sensor_monitor/data/
+data.zip

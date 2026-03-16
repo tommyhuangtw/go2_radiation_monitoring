@@ -10,6 +10,7 @@ Launched via: python sensor_monitor/auto_navigator.py --web
 """
 
 import os
+import sys
 import json
 import struct
 import asyncio
@@ -17,6 +18,9 @@ import logging
 import threading
 from queue import Queue, Empty
 from pathlib import Path
+
+# Ensure sensor_monitor package is importable
+sys.path.insert(0, str(Path(__file__).parent))
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, JSONResponse
@@ -75,6 +79,112 @@ async def get_floor_plan():
         return JSONResponse({"error": "floor_plan.png not found"}, status_code=404)
     return FileResponse(str(img_path), media_type="image/png",
                         headers={"Cache-Control": "no-store"})
+
+
+# ------------------------------------------------------------------
+# 3D visualization generation
+# ------------------------------------------------------------------
+
+_3d_gen_status = "idle"   # idle | generating | ready | error
+_3d_gen_message = ""
+_3d_gen_lock = threading.Lock()
+
+_2d_gen_status = "idle"   # idle | generating | ready | error
+_2d_gen_message = ""
+_2d_gen_lock = threading.Lock()
+
+
+@app.post("/api/generate_3d")
+async def generate_3d():
+    global _3d_gen_status, _3d_gen_message
+    with _3d_gen_lock:
+        if _3d_gen_status == "generating":
+            return JSONResponse({"status": "already_running"})
+        _3d_gen_status = "generating"
+        _3d_gen_message = ""
+
+    def worker():
+        global _3d_gen_status, _3d_gen_message
+        try:
+            from sensor_surface_sphere_overlay import generate_3d_html_only
+            generate_3d_html_only()
+            _3d_gen_status = "ready"
+            _3d_gen_message = "3D visualization generated"
+        except Exception as e:
+            _3d_gen_status = "error"
+            _3d_gen_message = str(e)
+            print(f"3D generation error: {e}")
+
+    threading.Thread(target=worker, daemon=True).start()
+    return JSONResponse({"status": "generating"})
+
+
+@app.get("/api/3d_status")
+async def get_3d_status():
+    return JSONResponse({"status": _3d_gen_status, "message": _3d_gen_message})
+
+
+@app.get("/api/sensor_3d")
+async def get_sensor_3d():
+    html_path = DATA_DIR / "sensor_3d_interactive.html"
+    if not html_path.exists():
+        return JSONResponse({"error": "3D visualization not generated yet"}, status_code=404)
+    return FileResponse(str(html_path), media_type="text/html",
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/generate_2d")
+async def generate_2d():
+    global _2d_gen_status, _2d_gen_message
+    with _2d_gen_lock:
+        if _2d_gen_status == "generating":
+            return JSONResponse({"status": "already_running"})
+        _2d_gen_status = "generating"
+        _2d_gen_message = ""
+
+    def worker():
+        global _2d_gen_status, _2d_gen_message
+        try:
+            from sensor_surface_sphere_overlay import generate_2d_heatmap_only
+            generate_2d_heatmap_only()
+            _2d_gen_status = "ready"
+            _2d_gen_message = "2D heatmap generated"
+        except Exception as e:
+            _2d_gen_status = "error"
+            _2d_gen_message = str(e)
+            print(f"2D generation error: {e}")
+
+    threading.Thread(target=worker, daemon=True).start()
+    return JSONResponse({"status": "generating"})
+
+
+@app.get("/api/2d_status")
+async def get_2d_status():
+    return JSONResponse({"status": _2d_gen_status, "message": _2d_gen_message})
+
+
+@app.get("/api/sensor_heatmap_2d")
+async def get_sensor_heatmap_2d():
+    png_path = DATA_DIR / "sensor_heatmap_2d.png"
+    if not png_path.exists():
+        return JSONResponse({"error": "2D heatmap not generated yet"}, status_code=404)
+    return FileResponse(str(png_path), media_type="image/png",
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/sensor_data")
+async def get_sensor_data():
+    """Return sensor_data.csv as JSON for the frontend."""
+    csv_path = DATA_DIR / "sensor_data.csv"
+    if not csv_path.exists():
+        return JSONResponse({"error": "sensor_data.csv not found"}, status_code=404)
+    import csv as csv_mod
+    data = []
+    with open(csv_path, "r") as f:
+        reader = csv_mod.DictReader(f)
+        for row in reader:
+            data.append(row)
+    return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
 
 # ------------------------------------------------------------------
