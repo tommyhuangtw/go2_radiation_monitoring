@@ -253,35 +253,21 @@ Remove `--no-sensor` if an Arduino sensor is connected. Add `--loop` for continu
 ### 4b. Run autonomous monitoring (Web UI)
 
 ```bash
-# Without sensor/gantry:
+# Navigation only (no sensor, no gantry — test robot movement):
 python sensor_monitor/auto_navigator.py --web --bridge 192.168.0.207 --no-sensor
 
-# With sensor only:
-python sensor_monitor/auto_navigator.py --web \
-    --bridge 192.168.0.207 \
-    --sensor-host 192.168.0.207
+# Navigation + gantry, no sensor (test gantry without Arduino):
+python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --no-sensor
 
-# With sensor + gantry (2D mode — default, single elevated height):
-python sensor_monitor/auto_navigator.py --web \
-    --bridge 192.168.0.207 \
-    --sensor-host 192.168.0.207 \
-    --gantry-host 192.168.0.207 \
-    --gantry-height 150 \
-    --measure-duration 5
+# Full system: sensor + gantry, 2D scan (default):
+python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207
 
-# With sensor + gantry (3D mode — dual altitude, low + high per waypoint):
-python sensor_monitor/auto_navigator.py --web \
-    --bridge 192.168.0.207 \
-    --sensor-host 192.168.0.207 \
-    --gantry-host 192.168.0.207 \
-    --gantry-height 150 \
-    --measure-duration 5 \
-    --measure-mode 3d
+# Full system: sensor + gantry, 3D scan (dual altitude):
+python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --measure-mode 3d
 ```
 
-> **Note:** `--sensor-host` must be the Jetson's **WiFi IP** (not the internal
-> `192.168.123.18`). All three services (DDS bridge, sensor bridge, gantry) use
-> the same WiFi IP.
+> **Tip:** `--jetson HOST` is shorthand for `--bridge HOST --sensor-host HOST --gantry-host HOST`.
+> Add `--no-sensor` to skip the Arduino sensor connection. Individual flags (e.g., `--gantry-height 300`) still work alongside `--jetson`.
 
 Open `http://localhost:8080` in your browser. The web UI provides:
 
@@ -351,12 +337,7 @@ Place the robot at its starting mark, then:
 cd ~/Desktop/unitree_sdk2_python
 conda activate go2
 
-python sensor_monitor/auto_navigator.py --web \
-    --bridge 192.168.0.207 \
-    --sensor-host 192.168.0.207 \
-    --gantry-host 192.168.0.207 \
-    --gantry-height 150 \
-    --measure-duration 5
+python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207
 ```
 
 ### Browser
@@ -473,20 +454,54 @@ manual jog buttons and live status.
 
 ### Sensor bridge (Arduino)
 
-**On Jetson:**
+**Step 1 — Check Arduino is detected on Jetson:**
 
 ```bash
 ssh unitree@192.168.0.207
+ls /dev/ttyACM*
+# Should show /dev/ttyACM0 (or similar). If not, check USB connection.
+```
+
+**Step 2 — Test Arduino serial directly (optional):**
+
+```bash
+# Read raw serial output to confirm Arduino is sending data
+cat /dev/ttyACM0
+# You should see lines like "Sound Intensity: 42" or just "42"
+# Press Ctrl+C to stop
+```
+
+**Step 3 — Start the sensor bridge:**
+
+```bash
 python3 ~/sensor_bridge.py --port /dev/ttyACM0
 ```
 
 You should see `value=...` lines printed as the Arduino sends readings.
+If you see `Permission denied`, run `sudo usermod -aG dialout unitree`, log out and back in.
 
-**On PC** — verify TCP connection:
+**Step 4 — Verify from PC over WiFi:**
 
 ```bash
-# Quick test with netcat (should print sensor values)
+# Quick test with netcat (should print sensor values, one per line)
 nc 192.168.0.207 9876
+```
+
+Or with Python:
+
+```python
+import socket
+s = socket.socket()
+s.connect(("192.168.0.207", 9876))
+for _ in range(5):
+    data = s.recv(1024).decode().strip()
+    print(f"Sensor reading: {data}")
+s.close()
+```
+
+If this works, the sensor is ready for auto_navigator. You can now run:
+```bash
+python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207
 ```
 
 ### DDS bridge (robot state + commands)
@@ -520,7 +535,7 @@ position updates at ~10 Hz.
 ## Important Notes
 
 - **Shared origin**: All scripts share one odometry frame anchored at the robot's boot-up position. Steps 1-2 (mapping + waypoint recording) must happen in the same boot session. Step 4 (auto-navigation) can be a later session, but the robot must start at the same taped position and heading. The navigator applies a small rigid-body correction, but large offsets will cause navigation errors.
-- **WiFi vs ethernet**: Use `--bridge 192.168.0.207` for WiFi mode (recommended). For direct ethernet without the bridge, omit `--bridge` and use `--interface enp0s2`.
+- **WiFi vs ethernet**: Use `--jetson 192.168.0.207` (or `--bridge 192.168.0.207`) for WiFi mode (recommended). For direct ethernet without the bridge, omit `--bridge`/`--jetson` and use `--interface enp0s2`.
 
 ## Known Limitations
 

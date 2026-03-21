@@ -999,8 +999,8 @@ if __name__ == "__main__":
                         help="Gantry controller host (e.g. 192.168.0.207). Enables dual-altitude measurement.")
     parser.add_argument("--gantry-port", type=int, default=8090,
                         help="Gantry controller HTTP port (default: 8090)")
-    parser.add_argument("--gantry-height", type=float, default=1500.0,
-                        help="Gantry raised height in mm (default: 1500)")
+    parser.add_argument("--gantry-height", type=float, default=150.0,
+                        help="Gantry raised height in mm (default: 150)")
     parser.add_argument("--measure-duration", type=float, default=5.0,
                         help="Sensor measurement duration in seconds (default: 5.0)")
     parser.add_argument("--measure-mode", choices=["2d", "3d"], default="2d",
@@ -1009,7 +1009,18 @@ if __name__ == "__main__":
                         help="Launch web UI instead of CLI mode")
     parser.add_argument("--web-port", type=int, default=8080,
                         help="Web server port (default: 8080)")
+    parser.add_argument("--jetson", default=None, metavar="HOST",
+                        help="Jetson WiFi IP — shorthand for --bridge, --sensor-host, and --gantry-host")
     args = parser.parse_args()
+
+    # --jetson sets all three host flags at once (individual flags override)
+    if args.jetson:
+        if not args.bridge:
+            args.bridge = args.jetson
+        if args.sensor_host == "192.168.123.18":  # still at default
+            args.sensor_host = args.jetson
+        if not args.gantry_host:
+            args.gantry_host = args.jetson
 
     nav = AutoNavigator(args.interface,
                           sensor_host=args.sensor_host,
