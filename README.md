@@ -411,6 +411,112 @@ All scripts are in `sensor_monitor/` and write data to `sensor_monitor/data/`.
 
 Data files are large and excluded from git via `.gitignore`.
 
+## Testing Individual Components
+
+You can test each Jetson service independently before running the full patrol.
+
+### Gantry (motor control)
+
+**On Jetson** — start the gantry controller:
+
+```bash
+ssh unitree@192.168.0.207
+python3 ~/gantry_control.py --web --port /dev/ttyUSB0
+```
+
+**On PC** — test with curl:
+
+```bash
+# Check state
+curl http://192.168.0.207:8090/api/state
+
+# Set current position as home (0mm)
+curl -X POST http://192.168.0.207:8090/api/home_here
+
+# Move up 150mm
+curl -X POST http://192.168.0.207:8090/api/move_to \
+     -H "Content-Type: application/json" -d '{"target_mm": 150}'
+
+# Check state again (should show moving=true, then position updating)
+curl http://192.168.0.207:8090/api/state
+
+# Move back to home
+curl -X POST http://192.168.0.207:8090/api/move_to \
+     -H "Content-Type: application/json" -d '{"target_mm": 0}'
+
+# Emergency stop
+curl -X POST http://192.168.0.207:8090/api/stop
+```
+
+**On PC** — test with Python (`gantry_client.py`):
+
+```python
+import sys; sys.path.insert(0, "sensor_monitor")
+from gantry_client import GantryClient
+
+c = GantryClient("192.168.0.207")
+print("Reachable:", c.is_reachable())
+print("State:", c.get_state())
+
+c.home_here()
+c.move_to(150)
+c.wait_for_arrival(timeout=60)
+print("At 150mm:", c.get_state())
+
+c.move_to(0)
+c.wait_for_arrival(timeout=60)
+print("Back home:", c.get_state())
+```
+
+The gantry controller also has its own web UI at `http://192.168.0.207:8090` with
+manual jog buttons and live status.
+
+### Sensor bridge (Arduino)
+
+**On Jetson:**
+
+```bash
+ssh unitree@192.168.0.207
+python3 ~/sensor_bridge.py --port /dev/ttyACM0
+```
+
+You should see `value=...` lines printed as the Arduino sends readings.
+
+**On PC** — verify TCP connection:
+
+```bash
+# Quick test with netcat (should print sensor values)
+nc 192.168.0.207 9876
+```
+
+### DDS bridge (robot state + commands)
+
+**On Jetson:**
+
+```bash
+ssh unitree@192.168.0.207
+python3 ~/dds_bridge.py --interface eth0
+```
+
+**On PC** — verify state stream:
+
+```python
+import socket, json
+s = socket.socket()
+s.connect(("192.168.0.207", 9877))
+s.sendall(json.dumps({"type": "subscribe"}).encode() + b"\n")
+for _ in range(5):
+    line = b""
+    while not line.endswith(b"\n"):
+        line += s.recv(4096)
+    state = json.loads(line)
+    print(f"Robot at ({state['x']:.3f}, {state['y']:.3f}), yaw={state['yaw']:.2f}")
+s.close()
+```
+
+If the robot is powered on and connected via ethernet to the Jetson, you should see
+position updates at ~10 Hz.
+
 ## Important Notes
 
 - **Shared origin**: All scripts share one odometry frame anchored at the robot's boot-up position. Steps 1-2 (mapping + waypoint recording) must happen in the same boot session. Step 4 (auto-navigation) can be a later session, but the robot must start at the same taped position and heading. The navigator applies a small rigid-body correction, but large offsets will cause navigation errors.
