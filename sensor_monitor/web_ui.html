@@ -81,15 +81,26 @@
   .full-width { grid-column: 1 / -1; }
 
   /* Floor plan */
-  #map-container { position: relative; width: 100%; background: #080810; border-radius: 8px; overflow: hidden; }
+  #map-container { position: relative; width: 100%; flex: 1; background: #080810; border-radius: 8px; overflow: hidden; }
   #floor-plan-img { display: block; width: 100%; height: auto; opacity: 0; transition: opacity 0.3s; }
   #floor-plan-img.loaded { opacity: 1; }
-  #map-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+  #map-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: grab; }
+  #map-canvas.dragging { cursor: grabbing; }
   #map-no-data { display: none; padding: 50px; text-align: center; color: var(--text-muted); }
+  #map-zoom-controls { position: absolute; top: 8px; right: 8px; display: flex; flex-direction: column; gap: 4px; z-index: 10; }
+  #map-zoom-controls button { width: 30px; height: 30px; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px;
+    background: rgba(0,0,0,0.6); color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; line-height: 1;
+    display: flex; align-items: center; justify-content: center; }
+  #map-zoom-controls button:hover { background: rgba(60,60,80,0.8); }
+
+  /* Floor plan + camera same-height row */
+  #map-panel .panel-body, #camera-panel .panel-body { display: flex; flex-direction: column; }
+  #map-panel .panel-body { min-height: 350px; max-height: 450px; }
+  #camera-panel .panel-body { min-height: 350px; max-height: 450px; }
 
   /* Camera */
-  #camera-feed { display: block; width: 100%; max-height: 360px; object-fit: contain; background: #000; border-radius: 8px; }
-  #camera-error { display: none; padding: 60px 20px; text-align: center; color: var(--text-muted); background: #080810; border-radius: 8px; }
+  #camera-feed { display: block; width: 100%; height: 100%; max-height: 450px; object-fit: contain; background: #000; border-radius: 8px; }
+  #camera-error { display: none; padding: 60px 20px; text-align: center; color: var(--text-muted); background: #080810; border-radius: 8px; flex: 1; }
 
   /* Controls */
   .controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
@@ -146,6 +157,9 @@
   tr.wp-done td { color: var(--green); }
   tr.wp-navigating td { color: var(--accent); }
   tr.wp-collecting td { color: var(--yellow); }
+  tr.wp-collecting_low td { color: var(--yellow); }
+  tr.wp-gantry_raising td { color: var(--purple); }
+  tr.wp-collecting_high td { color: var(--orange); }
   tr.wp-waiting td { color: var(--orange); }
   tr.wp-pending td { color: var(--text-muted); }
 
@@ -187,11 +201,113 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  /* Activity Banner */
+  .activity-banner {
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 18px; border-radius: 10px; margin-top: 14px;
+    background: #1a1a3e; border: 1px solid var(--border);
+    transition: background 0.4s, border-color 0.4s;
+  }
+  .activity-banner.pulse {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 0 0 transparent; }
+    50% { box-shadow: 0 0 18px 2px var(--pulse-color, rgba(79,140,255,0.3)); }
+  }
+  .activity-icon {
+    font-size: 1.8em; min-width: 44px; text-align: center; line-height: 1;
+  }
+  .activity-title {
+    font-size: 1.1em; font-weight: 700; letter-spacing: 0.2px;
+  }
+  .activity-detail {
+    font-size: 0.82em; color: var(--text-muted); margin-top: 2px;
+  }
+
+  /* Step Pipeline */
+  .step-pipeline {
+    display: flex; align-items: center; gap: 0; margin-top: 12px;
+    padding: 10px 4px;
+  }
+  .step-item {
+    display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0;
+  }
+  .step-dot {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: #1e1e3a; border: 2px solid #333;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.7em; font-weight: 700; color: var(--text-muted);
+    transition: all 0.3s;
+  }
+  .step-label {
+    font-size: 0.65em; color: var(--text-muted); text-align: center;
+    white-space: nowrap; transition: color 0.3s;
+  }
+  .step-item.active .step-dot {
+    transform: scale(1.2);
+    border-width: 3px;
+  }
+  .step-item.done .step-dot {
+    background: var(--green); border-color: var(--green); color: #fff;
+  }
+  .step-item.done .step-label { color: var(--green); }
+  .step-item.active .step-label { color: var(--text); font-weight: 700; }
+  .step-line {
+    flex: 1; height: 2px; background: #333; min-width: 12px;
+    transition: background 0.3s;
+  }
+  .step-line.done { background: var(--green); }
+
+  /* Patrol summary bar */
+  .patrol-summary {
+    display: none; padding: 10px 14px; border-radius: 8px; margin-bottom: 10px;
+    background: #0e0e1e; border: 1px solid #1e1e3a;
+    font-size: 0.85em; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  .patrol-summary .badge {
+    padding: 3px 10px; border-radius: 12px; font-weight: 700; font-size: 0.82em;
+  }
+  .patrol-summary .badge-safe { background: var(--green); color: #fff; }
+  .patrol-summary .badge-warn { background: var(--yellow); color: #000; }
+  .patrol-summary .badge-danger { background: var(--red); color: #fff; }
+  .patrol-summary .stat { color: var(--text-muted); }
+  .patrol-summary .stat b { color: var(--text); }
+
+  /* Threshold-colored table cells */
+  td.cell-safe { color: var(--green); }
+  td.cell-warn { color: var(--yellow); font-weight: 700; }
+  td.cell-danger { color: var(--red); font-weight: 700; }
+  td.cell-delta { font-size: 0.85em; color: var(--text-muted); }
+  tr.wp-max-reading { background: rgba(239,68,68,0.1); }
+
+  /* Gantry vertical bar */
+  .gantry-vis {
+    display: flex; align-items: flex-end; gap: 8px; height: 48px;
+  }
+  .gantry-bar-track {
+    width: 18px; height: 100%; background: #1e1e3a; border-radius: 4px;
+    position: relative; overflow: hidden; border: 1px solid #333;
+  }
+  .gantry-bar-fill {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    background: linear-gradient(to top, var(--accent), var(--purple));
+    border-radius: 0 0 3px 3px; transition: height 0.4s ease;
+  }
+  .gantry-bar-info {
+    display: flex; flex-direction: column; justify-content: flex-end; gap: 2px;
+  }
+  .gantry-bar-pos { font-size: 1.1em; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+  .gantry-bar-dir { font-size: 0.75em; color: var(--text-muted); }
+
   /* Responsive */
   @media (max-width: 900px) {
     .main-grid { grid-template-columns: 1fr; padding: 10px; gap: 10px; }
     .tab-bar { padding: 0 10px; }
     #sensor-3d-iframe { height: 400px; }
+    .step-pipeline { gap: 0; }
+    .step-label { font-size: 0.55em; }
+    .step-dot { width: 22px; height: 22px; font-size: 0.6em; }
   }
 </style>
 </head>
@@ -226,13 +342,18 @@
              onload="this.classList.add('loaded'); initMapCanvas();"
              onerror="document.getElementById('map-no-data').style.display='block';">
         <canvas id="map-canvas"></canvas>
+        <div id="map-zoom-controls">
+          <button onclick="mapZoomBtn(1.4)" title="Zoom in">+</button>
+          <button onclick="mapZoomBtn(1/1.4)" title="Zoom out">&minus;</button>
+          <button onclick="mapZoomReset()" title="Reset view" style="font-size:11px;">&#8634;</button>
+        </div>
         <div id="map-no-data">No floor plan available.<br>Run lidar_mapper.py first.</div>
       </div>
     </div>
   </div>
 
   <!-- Camera Feed -->
-  <div class="panel">
+  <div class="panel" id="camera-panel">
     <div class="panel-header">Camera Feed</div>
     <div class="panel-body">
       <img id="camera-feed" src="/video" alt="Camera Feed"
@@ -246,7 +367,11 @@
     <div class="panel-header">Controls</div>
     <div class="panel-body">
       <div class="controls">
-        <button class="btn btn-start" id="btn-start" onclick="sendCmd('start')">Start Patrol</button>
+        <select id="measure-mode" style="padding:8px 12px; border-radius:8px; background:var(--bg-header); color:var(--text); border:1px solid var(--border); font-size:0.9em; font-weight:600;">
+          <option value="2d" selected>2D Scan (single height)</option>
+          <option value="3d">3D Scan (dual height)</option>
+        </select>
+        <button class="btn btn-start" id="btn-start" onclick="startPatrol()">Start Patrol</button>
         <button class="btn btn-next" id="btn-next" onclick="sendCmd('next')" disabled>Next Point</button>
         <button class="btn btn-stop" id="btn-stop" onclick="sendCmd('stop')">Emergency Stop</button>
       </div>
@@ -254,6 +379,28 @@
         <div class="progress-bar-fill" id="progress-fill" style="width: 0%"></div>
       </div>
       <div class="progress-text" id="progress-text">Waiting to start...</div>
+
+      <!-- Activity Banner -->
+      <div class="activity-banner" id="activity-banner">
+        <span class="activity-icon" id="activity-icon"></span>
+        <div>
+          <div class="activity-title" id="activity-title">Ready</div>
+          <div class="activity-detail" id="activity-detail">Click Start Patrol to begin</div>
+        </div>
+      </div>
+
+      <!-- Step Pipeline (per-waypoint cycle) -->
+      <div class="step-pipeline" id="step-pipeline" style="display:none;">
+        <div class="step-item" id="step-nav"><div class="step-dot">1</div><div class="step-label">Navigate</div></div>
+        <div class="step-line" id="line-nav"></div>
+        <div class="step-item" id="step-low"><div class="step-dot">2</div><div class="step-label">Measure Low</div></div>
+        <div class="step-line" id="line-low"></div>
+        <div class="step-item" id="step-gantry"><div class="step-dot">3</div><div class="step-label">Gantry Up</div></div>
+        <div class="step-line" id="line-gantry"></div>
+        <div class="step-item" id="step-high"><div class="step-dot">4</div><div class="step-label">Measure High</div></div>
+        <div class="step-line" id="line-high"></div>
+        <div class="step-item" id="step-wait"><div class="step-dot">5</div><div class="step-label">Next?</div></div>
+      </div>
     </div>
   </div>
 
@@ -280,6 +427,18 @@
           </div>
           <div class="data-value" id="val-sensor">N/A</div>
         </div>
+        <div class="data-item" id="gantry-item" style="display:none;">
+          <div class="data-label">Gantry Height</div>
+          <div class="gantry-vis">
+            <div class="gantry-bar-track">
+              <div class="gantry-bar-fill" id="gantry-bar-fill" style="height:0%"></div>
+            </div>
+            <div class="gantry-bar-info">
+              <div class="gantry-bar-pos" id="val-gantry">0mm</div>
+              <div class="gantry-bar-dir" id="gantry-dir"></div>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="threshold-row">
         <label>Safe &lt;</label>
@@ -289,6 +448,8 @@
         <label>Danger &ge;</label>
         <input type="number" id="thresh-danger" value="600" disabled
                style="background:transparent; border-color:#1e1e3a;">
+        <button class="btn" style="padding:4px 12px; font-size:0.78em; background:var(--accent-dim); color:var(--text); display:none;"
+                id="btn-gantry-home" onclick="gantryHome()">Home Gantry</button>
       </div>
     </div>
   </div>
@@ -297,9 +458,17 @@
   <div class="panel full-width">
     <div class="panel-header">Waypoint Log</div>
     <div class="panel-body">
+      <div class="patrol-summary" id="patrol-summary" style="display:none;">
+        <span class="stat"><b>Results:</b></span>
+        <span class="badge badge-safe" id="sum-safe">0 Safe</span>
+        <span class="badge badge-warn" id="sum-warn">0 Warning</span>
+        <span class="badge badge-danger" id="sum-danger">0 Danger</span>
+        <span class="stat">Avg: <b id="sum-avg">--</b></span>
+        <span class="stat">Max: <b id="sum-max">--</b></span>
+      </div>
       <div class="wp-table-wrap">
         <table>
-          <thead><tr><th>#</th><th>Position</th><th>Sensor</th><th>Status</th></tr></thead>
+          <thead><tr><th>#</th><th>Position</th><th id="th-low">Low</th><th id="th-high">High</th><th id="th-delta">Delta</th><th id="th-value" style="display:none;">Value</th><th>Status</th></tr></thead>
           <tbody id="wp-tbody"></tbody>
         </table>
       </div>
@@ -319,6 +488,12 @@
       3D Sensor Visualization
       <div style="display:flex; align-items:center; gap:12px;">
         <span class="gen-status" id="gen3d-status"></span>
+        <span id="phase-toggle-3d" style="display:none;">
+          <button class="btn" style="padding:4px 14px; font-size:0.75em; border-radius:6px;"
+                  id="btn-3d-low" onclick="set3DPhase('low')">Low Alt</button>
+          <button class="btn" style="padding:4px 14px; font-size:0.75em; border-radius:6px; opacity:0.5;"
+                  id="btn-3d-high" onclick="set3DPhase('high')">High Alt</button>
+        </span>
         <button class="btn btn-3d" id="btn-gen3d" onclick="generate3D()">Generate 3D View</button>
       </div>
     </div>
@@ -344,6 +519,12 @@
       2D Sensor Heatmap
       <div style="display:flex; align-items:center; gap:12px;">
         <span class="gen-status" id="gen2d-status"></span>
+        <span id="phase-toggle-2d" style="display:none;">
+          <button class="btn" style="padding:4px 14px; font-size:0.75em; border-radius:6px;"
+                  id="btn-2d-low" onclick="set2DPhase('low')">Low Alt</button>
+          <button class="btn" style="padding:4px 14px; font-size:0.75em; border-radius:6px; opacity:0.5;"
+                  id="btn-2d-high" onclick="set2DPhase('high')">High Alt</button>
+        </span>
         <button class="btn btn-3d" id="btn-gen2d" onclick="generate2DHeatmap()">Generate 2D Heatmap</button>
       </div>
     </div>
@@ -375,6 +556,13 @@ let latestState = null;
 let floorPlanImg = null;
 let mapCanvasReady = false;
 let mapViewport = null;
+let mapZoom = 1.0;        // interactive zoom level (1.0 = auto-fit)
+let mapPanX = 0;          // pan offset in image-pixel space
+let mapPanY = 0;
+let mapAutoViewport = null; // auto-computed viewport (waypoint-centered)
+let mapDragging = false;
+let mapDragStartX = 0, mapDragStartY = 0;
+let mapDragPanStartX = 0, mapDragPanStartY = 0;
 let displayAlign = null;
 let lastNavState = null;
 
@@ -515,6 +703,13 @@ function sendCmd(cmd) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({cmd}));
 }
 
+function startPatrol() {
+  const mode = document.getElementById('measure-mode').value;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({cmd: 'start', mode}));
+  }
+}
+
 // ---- UI Update ----
 function updateUI(s) {
   if (lastNavState !== s.nav_state && s.nav_state === 'standing_up') {
@@ -525,13 +720,19 @@ function updateUI(s) {
   lastNavState = s.nav_state;
 
   const badge = document.getElementById('status-badge');
-  const labels = { idle:'Idle', standing_up:'Standing Up', navigating:'Navigating', collecting:'Collecting', waiting:'Waiting', done:'Complete', error:'Error' };
-  const colors = { idle:'#444', standing_up:'var(--yellow)', navigating:'var(--accent)', collecting:'var(--purple)', waiting:'var(--orange)', done:'var(--green)', error:'var(--red)' };
+  const labels = { idle:'Idle', standing_up:'Standing Up', navigating:'Navigating', collecting:'Collecting', collecting_low:'Measuring (Low)', gantry_raising:'Gantry Rising', collecting_high:'Measuring (High)', waiting:'Waiting', done:'Complete', error:'Error' };
+  const colors = { idle:'#444', standing_up:'var(--yellow)', navigating:'var(--accent)', collecting:'var(--purple)', collecting_low:'var(--yellow)', gantry_raising:'var(--purple)', collecting_high:'var(--orange)', waiting:'var(--orange)', done:'var(--green)', error:'var(--red)' };
   badge.textContent = labels[s.nav_state] || s.nav_state;
   badge.style.background = colors[s.nav_state] || '#444';
 
   const isIdle = ['idle','done','error'].includes(s.nav_state);
   document.getElementById('btn-start').disabled = !isIdle;
+  document.getElementById('measure-mode').disabled = !isIdle;
+
+  // Show/hide Low/High phase toggles based on measure mode
+  const is3D = s.measure_mode === '3d';
+  document.getElementById('phase-toggle-3d').style.display = is3D ? 'inline' : 'none';
+  document.getElementById('phase-toggle-2d').style.display = is3D ? 'inline' : 'none';
   document.getElementById('btn-next').disabled = s.nav_state !== 'waiting';
 
   document.getElementById('val-x').textContent = displayPose.x.toFixed(3);
@@ -548,6 +749,35 @@ function updateUI(s) {
     sItem.className = 'data-item ' + (s.sensor_value < t.safe ? 'sensor-safe' : s.sensor_value < t.warn ? 'sensor-warn' : 'sensor-danger');
   } else { valSensor.textContent = 'N/A'; sItem.className = 'data-item'; }
 
+  // Gantry visual bar
+  const gantryItem = document.getElementById('gantry-item');
+  const gantryVal = document.getElementById('val-gantry');
+  const gantryHomeBtn = document.getElementById('btn-gantry-home');
+  const gantryBarFill = document.getElementById('gantry-bar-fill');
+  const gantryDir = document.getElementById('gantry-dir');
+  if (s.gantry) {
+    gantryItem.style.display = '';
+    gantryHomeBtn.style.display = '';
+    const pos = s.gantry.current_position_mm || 0;
+    const target = s.gantry.last_target_mm;
+    const moving = s.gantry.moving;
+    const maxH = 1500; // approximate max for bar display
+    const pct = Math.min(100, Math.max(0, (pos / maxH) * 100));
+    gantryBarFill.style.height = pct + '%';
+    gantryVal.textContent = pos.toFixed(0) + 'mm';
+    gantryVal.style.color = moving ? 'var(--yellow)' : 'var(--green)';
+    if (moving && target != null) {
+      gantryDir.textContent = target > pos ? '\u2191 Rising' : '\u2193 Lowering';
+      gantryDir.style.color = 'var(--yellow)';
+    } else {
+      gantryDir.textContent = pos < 2 ? 'Home' : 'Stopped';
+      gantryDir.style.color = 'var(--text-muted)';
+    }
+  } else {
+    gantryItem.style.display = 'none';
+    gantryHomeBtn.style.display = 'none';
+  }
+
   const total = s.total_waypoints || 0;
   const done = s.waypoint_statuses ? s.waypoint_statuses.filter(x => x === 'done').length : 0;
   const pct = total > 0 ? (done / total * 100) : 0;
@@ -558,31 +788,251 @@ function updateUI(s) {
   else if (s.nav_state === 'error') pt.textContent = `Error: ${s.error}`;
   else pt.textContent = `Waypoint ${s.current_waypoint + 1} / ${total} (${done} done)`;
 
+  updateActivityBanner(s);
+  updateStepPipeline(s);
   updateWaypointTable(s);
   if (mapCanvasReady) drawMap(s);
+
+  // Auto-load 3D visualization when patrol completes (server auto-generates)
+  if (s.nav_state === 'done' && lastNavState !== 'done') {
+    // Poll for 3D readiness every 3s for up to 30s
+    let pollCount = 0;
+    const pollViz = setInterval(async () => {
+      pollCount++;
+      try {
+        const r = await fetch('/api/3d_status');
+        const d = await r.json();
+        if (d.status === 'ready') {
+          clearInterval(pollViz);
+          load3DIframe();
+        }
+      } catch(e) {}
+      if (pollCount >= 10) clearInterval(pollViz);
+    }, 3000);
+  }
+}
+
+// ---- Activity Banner + Step Pipeline ----
+let collectStartTime = null;
+let lastBannerState = null;
+const MEASURE_DURATION = 5.0; // default, could be made dynamic
+
+function updateActivityBanner(s) {
+  const banner = document.getElementById('activity-banner');
+  const icon = document.getElementById('activity-icon');
+  const title = document.getElementById('activity-title');
+  const detail = document.getElementById('activity-detail');
+  const wpNum = (s.current_waypoint || 0) + 1;
+  const total = s.total_waypoints || 0;
+
+  // Track measurement countdown
+  if (s.nav_state !== lastBannerState) {
+    if (s.nav_state === 'collecting_low' || s.nav_state === 'collecting_high') {
+      collectStartTime = Date.now();
+    } else {
+      collectStartTime = null;
+    }
+    lastBannerState = s.nav_state;
+  }
+
+  let elapsed = collectStartTime ? (Date.now() - collectStartTime) / 1000 : 0;
+  let remaining = Math.max(0, MEASURE_DURATION - elapsed).toFixed(1);
+
+  const gantryPos = s.gantry ? (s.gantry.current_position_mm || 0).toFixed(0) : '0';
+  const gantryTarget = s.gantry && s.gantry.last_target_mm != null ? s.gantry.last_target_mm.toFixed(0) : '?';
+
+  const config = {
+    idle:            { icon:'\u23F8',  title:'Ready',                detail:'Click Start Patrol to begin',                              color:'#333',          pulse:false },
+    standing_up:     { icon:'\uD83D\uDC15', title:'Standing Up',    detail:'Preparing robot...',                                        color:'#854d0e',       pulse:true },
+    navigating:      { icon:'\u27A1\uFE0F', title:'Robot Moving',   detail:`Navigating to Waypoint ${wpNum} / ${total}`,                color:'#1e3a5f',       pulse:true },
+    collecting:      { icon:'\uD83D\uDCE1', title:'Measuring',      detail:'Collecting sensor data...',                                 color:'#5b21b6',       pulse:true },
+    collecting_low:  { icon:'\uD83D\uDCE1', title:'Measuring (Ground)', detail:`Sampling at 0mm \u2014 ${remaining}s remaining`,        color:'#854d0e',       pulse:true },
+    gantry_raising:  { icon:'\u2B06\uFE0F', title:'Gantry Rising',  detail:`Moving to ${gantryTarget}mm (now at ${gantryPos}mm)`,       color:'#5b21b6',       pulse:true },
+    collecting_high: { icon:'\uD83D\uDCE1', title:'Measuring (Elevated)', detail:`Sampling at ${gantryTarget}mm \u2014 ${remaining}s remaining`, color:'#9a3412', pulse:true },
+    waiting:         { icon:'\u270B',  title:'Waiting for Operator', detail:'Click "Next Point" to continue',                           color:'#9a3412',       pulse:false },
+    done:            { icon:'\u2705',  title:'Patrol Complete',      detail:`All ${total} waypoints done!`,                              color:'#166534',       pulse:false },
+    error:           { icon:'\u274C',  title:'Error',                detail:s.error || 'Unknown error',                                 color:'#7f1d1d',       pulse:false },
+  };
+
+  const c = config[s.nav_state] || config.idle;
+  icon.textContent = c.icon;
+  title.textContent = c.title;
+  detail.textContent = c.detail;
+  banner.style.background = c.color;
+  banner.style.borderColor = c.color;
+  banner.style.setProperty('--pulse-color', c.color + '66');
+  banner.classList.toggle('pulse', c.pulse);
+}
+
+function updateStepPipeline(s) {
+  const pipeline = document.getElementById('step-pipeline');
+  const hasGantry = s.gantry != null;
+  const isActive = !['idle', 'done', 'error'].includes(s.nav_state);
+
+  if (!isActive || !hasGantry) {
+    pipeline.style.display = 'none';
+    return;
+  }
+  pipeline.style.display = 'flex';
+
+  // Map nav_state to step index: nav=0, low=1, gantry=2, high=3, wait=4
+  const stateToStep = {
+    standing_up: -1, navigating: 0,
+    collecting_low: 1, gantry_raising: 2, collecting_high: 3, waiting: 4,
+  };
+  const currentStep = stateToStep[s.nav_state] ?? -1;
+
+  const steps = ['step-nav', 'step-low', 'step-gantry', 'step-high', 'step-wait'];
+  const lines = ['line-nav', 'line-low', 'line-gantry', 'line-high'];
+  const stepColors = ['var(--accent)', 'var(--yellow)', 'var(--purple)', 'var(--orange)', 'var(--orange)'];
+
+  steps.forEach((id, i) => {
+    const el = document.getElementById(id);
+    const dot = el.querySelector('.step-dot');
+    el.classList.remove('active', 'done');
+    dot.style.borderColor = '';
+    dot.style.background = '';
+    dot.style.color = '';
+
+    if (i < currentStep) {
+      el.classList.add('done');
+      dot.textContent = '\u2713';
+    } else if (i === currentStep) {
+      el.classList.add('active');
+      dot.style.borderColor = stepColors[i];
+      dot.style.background = stepColors[i];
+      dot.style.color = '#fff';
+      dot.textContent = (i + 1).toString();
+    } else {
+      dot.textContent = (i + 1).toString();
+    }
+  });
+
+  lines.forEach((id, i) => {
+    const el = document.getElementById(id);
+    el.classList.toggle('done', i < currentStep);
+  });
+}
+
+function formatSensorEntry(entry) {
+  if (!entry || entry.sensor_value === '' || entry.sensor_value == null) return '--';
+  const val = parseFloat(entry.sensor_value).toFixed(1);
+  const std = entry.sensor_stddev != null && entry.sensor_stddev !== '' ? '\u00b1' + parseFloat(entry.sensor_stddev).toFixed(1) : '';
+  return val + std;
+}
+
+function sensorCellClass(val) {
+  if (val == null) return '';
+  const t = getThresholds();
+  if (val < t.safe) return 'cell-safe';
+  if (val < t.warn) return 'cell-warn';
+  return 'cell-danger';
 }
 
 function updateWaypointTable(s) {
   const tbody = document.getElementById('wp-tbody');
   const total = s.total_waypoints || waypoints.length;
+  const t = getThresholds();
+
+  // Toggle table columns based on measure mode
+  const is3DMode = s.measure_mode === '3d';
+  document.getElementById('th-low').style.display = is3DMode ? '' : 'none';
+  document.getElementById('th-high').style.display = is3DMode ? '' : 'none';
+  document.getElementById('th-delta').style.display = is3DMode ? '' : 'none';
+  document.getElementById('th-value').style.display = is3DMode ? 'none' : '';
+
   if (total === 0 && tbody.children.length === 0 && waypoints.length > 0) {
     let html = '';
     for (let i = 0; i < waypoints.length; i++) {
       const wp = waypoints[i];
-      html += `<tr class="wp-pending"><td>${i+1}</td><td>(${wp.x.toFixed(2)}, ${wp.y.toFixed(2)})</td><td>--</td><td>pending</td></tr>`;
+      if (is3DMode) {
+        html += `<tr class="wp-pending"><td>${i+1}</td><td>(${wp.x.toFixed(2)}, ${wp.y.toFixed(2)})</td><td>--</td><td>--</td><td></td><td>pending</td></tr>`;
+      } else {
+        html += `<tr class="wp-pending"><td>${i+1}</td><td>(${wp.x.toFixed(2)}, ${wp.y.toFixed(2)})</td><td>--</td><td>pending</td></tr>`;
+      }
     }
     tbody.innerHTML = html;
     return;
   }
+
   let html = '';
+  let allValues = [];
+  let maxVal = -Infinity, maxWp = 0;
+  let safeCount = 0, warnCount = 0, dangerCount = 0;
+
+  // First pass: collect data
+  const rowData = [];
   for (let i = 0; i < total; i++) {
     const status = (s.waypoint_statuses && s.waypoint_statuses[i]) || 'pending';
     const wp = waypoints[i] || {x:0, y:0};
-    const log = s.sensor_log ? s.sensor_log.find(e => e.waypoint === i + 1) : null;
-    const sv = log && log.sensor_value !== '' ? parseFloat(log.sensor_value).toFixed(1) : '--';
-    html += `<tr class="wp-${status}"><td>${i+1}</td><td>(${wp.x.toFixed(2)}, ${wp.y.toFixed(2)})</td><td>${sv}</td><td>${status}</td></tr>`;
+    const logs = s.sensor_log ? s.sensor_log.filter(e => e.waypoint === i + 1) : [];
+    const lowEntry = logs.find(e => e.measurement_phase === 'low');
+    const highEntry = logs.find(e => e.measurement_phase === 'high');
+    const elevatedEntry = logs.find(e => e.measurement_phase === 'elevated');
+    const fallbackEntry = logs.length > 0 && !lowEntry && !highEntry && !elevatedEntry ? logs[0] : null;
+    const primary = lowEntry || elevatedEntry || fallbackEntry;
+    const lowVal = primary && primary.sensor_value !== '' ? parseFloat(primary.sensor_value) : null;
+    const highVal = highEntry && highEntry.sensor_value !== '' ? parseFloat(highEntry.sensor_value) : null;
+
+    if (lowVal != null) {
+      allValues.push(lowVal);
+      if (lowVal > maxVal) { maxVal = lowVal; maxWp = i + 1; }
+      if (lowVal < t.safe) safeCount++;
+      else if (lowVal < t.warn) warnCount++;
+      else dangerCount++;
+    }
+    if (highVal != null) allValues.push(highVal);
+
+    rowData.push({ i, status, wp, primary, lowEntry: lowEntry || fallbackEntry, highEntry, elevatedEntry, lowVal, highVal });
+  }
+
+  // Build rows
+  for (const r of rowData) {
+    const lowStr = formatSensorEntry(r.lowEntry);
+    const highStr = formatSensorEntry(r.highEntry);
+    const lowClass = sensorCellClass(r.lowVal);
+    const highClass = sensorCellClass(r.highVal);
+    const isMax = r.lowVal != null && r.lowVal === maxVal;
+
+    let deltaStr = '';
+    if (r.lowVal != null && r.highVal != null) {
+      const delta = r.highVal - r.lowVal;
+      const arrow = delta > 0 ? '\u2191' : delta < 0 ? '\u2193' : '=';
+      deltaStr = `${arrow}${Math.abs(delta).toFixed(0)}`;
+    }
+
+    html += `<tr class="wp-${r.status}${isMax ? ' wp-max-reading' : ''}">`;
+    html += `<td>${r.i+1}</td>`;
+    html += `<td>(${r.wp.x.toFixed(2)}, ${r.wp.y.toFixed(2)})</td>`;
+    if (is3DMode) {
+      html += `<td class="${lowClass}">${lowStr}</td>`;
+      html += `<td class="${highClass}">${highStr}</td>`;
+      html += `<td class="cell-delta">${deltaStr}</td>`;
+    } else {
+      // 2D mode: single Value column (elevated or fallback)
+      const valEntry = r.elevatedEntry || r.primary;
+      const valStr = formatSensorEntry(valEntry);
+      const valNum = valEntry && valEntry.sensor_value !== '' ? parseFloat(valEntry.sensor_value) : null;
+      const valClass = sensorCellClass(valNum);
+      html += `<td class="${valClass}">${valStr}</td>`;
+    }
+    html += `<td>${r.status}</td></tr>`;
   }
   tbody.innerHTML = html;
+
+  // Update summary bar
+  const summary = document.getElementById('patrol-summary');
+  if (allValues.length > 0) {
+    summary.style.display = 'flex';
+    document.getElementById('sum-safe').textContent = safeCount + ' Safe';
+    document.getElementById('sum-warn').textContent = warnCount + ' Warning';
+    document.getElementById('sum-danger').textContent = dangerCount + ' Danger';
+    const avg = allValues.reduce((a,b) => a+b, 0) / allValues.length;
+    document.getElementById('sum-avg').textContent = avg.toFixed(0);
+    document.getElementById('sum-max').textContent = maxVal.toFixed(0) + ' (WP #' + maxWp + ')';
+  } else {
+    summary.style.display = 'none';
+  }
 }
 
 // ---- Map Canvas ----
@@ -593,7 +1043,9 @@ function initMapCanvas() {
   canvas.width = img.naturalWidth;
   canvas.height = img.naturalHeight;
   document.getElementById('map-no-data').style.display = 'none';
-  mapViewport = null;
+
+  // Compute auto-fit viewport (centered on waypoints)
+  mapAutoViewport = null;
   if (waypoints.length > 0 && mapMeta) {
     let sumX = 0, sumY = 0;
     for (const wp of waypoints) {
@@ -604,9 +1056,178 @@ function initMapCanvas() {
     const sw = img.naturalWidth * 0.8, sh = img.naturalHeight * 0.8;
     let sx = Math.max(0, Math.min(cx - sw/2, img.naturalWidth - sw));
     let sy = Math.max(0, Math.min(cy - sh/2, img.naturalHeight - sh));
-    mapViewport = {sx, sy, sw, sh};
+    mapAutoViewport = {cx, cy, sw, sh, sx, sy};
   }
+  mapZoom = 1.0; mapPanX = 0; mapPanY = 0;
+  updateMapViewport();
+
+  // Setup interactive events (once)
+  if (!canvas._eventsAttached) {
+    canvas._eventsAttached = true;
+    canvas.addEventListener('wheel', onMapWheel, {passive: false});
+    canvas.addEventListener('mousedown', onMapMouseDown);
+    canvas.addEventListener('mousemove', onMapMouseMove);
+    canvas.addEventListener('mouseup', onMapMouseUp);
+    canvas.addEventListener('mouseleave', onMapMouseUp);
+    canvas.addEventListener('dblclick', onMapDblClick);
+    // Touch support
+    canvas.addEventListener('touchstart', onMapTouchStart, {passive: false});
+    canvas.addEventListener('touchmove', onMapTouchMove, {passive: false});
+    canvas.addEventListener('touchend', onMapTouchEnd);
+  }
+
   mapCanvasReady = true;
+  if (latestState) drawMap(latestState);
+}
+
+function updateMapViewport() {
+  if (!floorPlanImg) return;
+  const img = floorPlanImg;
+  if (mapAutoViewport) {
+    const baseSW = mapAutoViewport.sw / mapZoom;
+    const baseSH = mapAutoViewport.sh / mapZoom;
+    const cx = mapAutoViewport.cx + mapPanX;
+    const cy = mapAutoViewport.cy + mapPanY;
+    let sx = cx - baseSW / 2;
+    let sy = cy - baseSH / 2;
+    // Clamp to image bounds
+    sx = Math.max(0, Math.min(sx, img.naturalWidth - baseSW));
+    sy = Math.max(0, Math.min(sy, img.naturalHeight - baseSH));
+    mapViewport = {sx, sy, sw: baseSW, sh: baseSH};
+  } else {
+    // No waypoints: zoom on full image
+    const baseSW = img.naturalWidth / mapZoom;
+    const baseSH = img.naturalHeight / mapZoom;
+    const cx = img.naturalWidth / 2 + mapPanX;
+    const cy = img.naturalHeight / 2 + mapPanY;
+    let sx = cx - baseSW / 2;
+    let sy = cy - baseSH / 2;
+    sx = Math.max(0, Math.min(sx, img.naturalWidth - baseSW));
+    sy = Math.max(0, Math.min(sy, img.naturalHeight - baseSH));
+    mapViewport = {sx, sy, sw: baseSW, sh: baseSH};
+  }
+}
+
+function canvasToImage(canvasX, canvasY) {
+  const canvas = document.getElementById('map-canvas');
+  if (!mapViewport || !canvas) return {ix: canvasX, iy: canvasY};
+  return {
+    ix: mapViewport.sx + (canvasX / canvas.width) * mapViewport.sw,
+    iy: mapViewport.sy + (canvasY / canvas.height) * mapViewport.sh
+  };
+}
+
+function getCanvasCoords(e) {
+  const canvas = document.getElementById('map-canvas');
+  const rect = canvas.getBoundingClientRect();
+  return {
+    cx: (e.clientX - rect.left) * (canvas.width / rect.width),
+    cy: (e.clientY - rect.top) * (canvas.height / rect.height)
+  };
+}
+
+function onMapWheel(e) {
+  e.preventDefault();
+  const {cx, cy} = getCanvasCoords(e);
+  const imgBefore = canvasToImage(cx, cy);
+  const factor = e.deltaY < 0 ? 1.25 : 0.8;
+  mapZoom = Math.max(0.5, Math.min(8.0, mapZoom * factor));
+  updateMapViewport();
+  // Adjust pan so the point under cursor stays fixed
+  const imgAfter = canvasToImage(cx, cy);
+  mapPanX += (imgBefore.ix - imgAfter.ix);
+  mapPanY += (imgBefore.iy - imgAfter.iy);
+  updateMapViewport();
+  if (latestState) drawMap(latestState);
+}
+
+function onMapMouseDown(e) {
+  mapDragging = true;
+  mapDragStartX = e.clientX; mapDragStartY = e.clientY;
+  mapDragPanStartX = mapPanX; mapDragPanStartY = mapPanY;
+  e.target.classList.add('dragging');
+}
+
+function onMapMouseMove(e) {
+  if (!mapDragging) return;
+  const canvas = document.getElementById('map-canvas');
+  const rect = canvas.getBoundingClientRect();
+  // Convert pixel drag to image-space pan
+  const scaleX = (mapViewport ? mapViewport.sw : floorPlanImg.naturalWidth) / rect.width;
+  const scaleY = (mapViewport ? mapViewport.sh : floorPlanImg.naturalHeight) / rect.height;
+  mapPanX = mapDragPanStartX - (e.clientX - mapDragStartX) * scaleX;
+  mapPanY = mapDragPanStartY - (e.clientY - mapDragStartY) * scaleY;
+  updateMapViewport();
+  if (latestState) drawMap(latestState);
+}
+
+function onMapMouseUp(e) {
+  if (mapDragging) {
+    mapDragging = false;
+    document.getElementById('map-canvas').classList.remove('dragging');
+  }
+}
+
+function onMapDblClick(e) {
+  const {cx, cy} = getCanvasCoords(e);
+  const imgPt = canvasToImage(cx, cy);
+  const base = mapAutoViewport || {cx: floorPlanImg.naturalWidth/2, cy: floorPlanImg.naturalHeight/2};
+  mapPanX = imgPt.ix - base.cx;
+  mapPanY = imgPt.iy - base.cy;
+  mapZoom = Math.min(8.0, mapZoom * 2);
+  updateMapViewport();
+  if (latestState) drawMap(latestState);
+}
+
+// Touch support
+let mapTouchStartDist = 0;
+let mapTouchStartZoom = 1;
+function onMapTouchStart(e) {
+  if (e.touches.length === 1) {
+    e.preventDefault();
+    mapDragging = true;
+    mapDragStartX = e.touches[0].clientX; mapDragStartY = e.touches[0].clientY;
+    mapDragPanStartX = mapPanX; mapDragPanStartY = mapPanY;
+  } else if (e.touches.length === 2) {
+    e.preventDefault();
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    mapTouchStartDist = Math.sqrt(dx*dx + dy*dy);
+    mapTouchStartZoom = mapZoom;
+  }
+}
+function onMapTouchMove(e) {
+  if (e.touches.length === 1 && mapDragging) {
+    e.preventDefault();
+    const canvas = document.getElementById('map-canvas');
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = (mapViewport ? mapViewport.sw : floorPlanImg.naturalWidth) / rect.width;
+    const scaleY = (mapViewport ? mapViewport.sh : floorPlanImg.naturalHeight) / rect.height;
+    mapPanX = mapDragPanStartX - (e.touches[0].clientX - mapDragStartX) * scaleX;
+    mapPanY = mapDragPanStartY - (e.touches[0].clientY - mapDragStartY) * scaleY;
+    updateMapViewport();
+    if (latestState) drawMap(latestState);
+  } else if (e.touches.length === 2) {
+    e.preventDefault();
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    mapZoom = Math.max(0.5, Math.min(8.0, mapTouchStartZoom * (dist / mapTouchStartDist)));
+    updateMapViewport();
+    if (latestState) drawMap(latestState);
+  }
+}
+function onMapTouchEnd(e) { mapDragging = false; }
+
+function mapZoomBtn(factor) {
+  mapZoom = Math.max(0.5, Math.min(8.0, mapZoom * factor));
+  updateMapViewport();
+  if (latestState) drawMap(latestState);
+}
+
+function mapZoomReset() {
+  mapZoom = 1.0; mapPanX = 0; mapPanY = 0;
+  updateMapViewport();
   if (latestState) drawMap(latestState);
 }
 
@@ -642,16 +1263,64 @@ function drawMap(s) {
     ctx.stroke();
   }
 
-  // Waypoint markers
+  // Waypoint markers — enhanced with sensor readings on completed waypoints
+  const thresh = getThresholds();
   waypoints.forEach((wp, i) => {
     const p = worldToCanvas(wp.x, wp.y, canvas); if (!p) return;
     const status = (s.waypoint_statuses && s.waypoint_statuses[i]) || 'pending';
-    const c = { pending:'#555', navigating:'#4f8cff', collecting:'#a855f7', waiting:'#f97316', done:'#22c55e' };
-    ctx.beginPath(); ctx.arc(p.x, p.y, 8, 0, 2*Math.PI);
-    ctx.fillStyle = c[status] || '#555'; ctx.fill();
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(i + 1, p.x, p.y);
+    const statusColors = { pending:'#555', navigating:'#4f8cff', collecting:'#a855f7', collecting_low:'#eab308', gantry_raising:'#a855f7', collecting_high:'#f97316', waiting:'#f97316', done:'#22c55e' };
+
+    // Get sensor readings for this waypoint
+    const logs = s.sensor_log ? s.sensor_log.filter(e => e.waypoint === i + 1) : [];
+    const lowEntry = logs.find(e => e.measurement_phase === 'low');
+    const highEntry = logs.find(e => e.measurement_phase === 'high');
+    const elevatedEntry = logs.find(e => e.measurement_phase === 'elevated');
+    const fallback = logs.length > 0 && !lowEntry && !highEntry && !elevatedEntry ? logs[0] : null;
+    const primaryEntry = lowEntry || elevatedEntry || fallback;
+    const primaryVal = primaryEntry && primaryEntry.sensor_value !== '' ? parseFloat(primaryEntry.sensor_value) : null;
+    const highVal = highEntry && highEntry.sensor_value !== '' ? parseFloat(highEntry.sensor_value) : null;
+
+    if (status === 'done' && primaryVal != null) {
+      // Completed waypoint: draw threshold-colored marker with value
+      const sensorColor = primaryVal < thresh.safe ? 'var(--green)' : primaryVal < thresh.warn ? 'var(--yellow)' : 'var(--red)';
+      const radius = Math.max(10, Math.min(18, 8 + (primaryVal / (thresh.warn || 600)) * 8));
+
+      // Outer ring for high reading (if available)
+      if (highVal != null) {
+        const highColor = highVal < thresh.safe ? '#22c55e' : highVal < thresh.warn ? '#eab308' : '#ef4444';
+        ctx.beginPath(); ctx.arc(p.x, p.y, radius + 4, 0, 2*Math.PI);
+        ctx.strokeStyle = highColor; ctx.lineWidth = 3; ctx.stroke();
+      }
+
+      // Main circle
+      ctx.beginPath(); ctx.arc(p.x, p.y, radius, 0, 2*Math.PI);
+      ctx.fillStyle = sensorColor; ctx.globalAlpha = 0.85; ctx.fill(); ctx.globalAlpha = 1.0;
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+
+      // Waypoint number
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(i + 1, p.x, p.y);
+
+      // Value label
+      ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#000'; ctx.fillText(primaryVal.toFixed(0), p.x + radius + 5 + 1, p.y + 1);
+      ctx.fillStyle = sensorColor; ctx.fillText(primaryVal.toFixed(0), p.x + radius + 5, p.y);
+
+      // Altitude arrow (if dual readings)
+      if (highVal != null) {
+        const arrow = highVal > primaryVal ? '\u2191' : highVal < primaryVal ? '\u2193' : '=';
+        ctx.font = '10px sans-serif';
+        ctx.fillStyle = '#aaa';
+        ctx.fillText(arrow, p.x + radius + 5, p.y + 12);
+      }
+    } else {
+      // Pending / in-progress: simple colored dot
+      ctx.beginPath(); ctx.arc(p.x, p.y, 8, 0, 2*Math.PI);
+      ctx.fillStyle = statusColors[status] || '#555'; ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(i + 1, p.x, p.y);
+    }
   });
 
   // Robot
@@ -660,10 +1329,28 @@ function drawMap(s) {
   if (rp) {
     ctx.save(); ctx.translate(rp.x, rp.y); ctx.rotate(-displayPose.yaw);
     ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(-7, -6); ctx.lineTo(-7, 6); ctx.closePath();
-    const rc = { idle:'#888', navigating:'#22c55e', collecting:'#eab308', waiting:'#f97316', done:'#22c55e', error:'#ef4444', standing_up:'#eab308' };
+    const rc = { idle:'#888', navigating:'#22c55e', collecting:'#eab308', collecting_low:'#eab308', gantry_raising:'#a855f7', collecting_high:'#f97316', waiting:'#f97316', done:'#22c55e', error:'#ef4444', standing_up:'#eab308' };
     ctx.fillStyle = rc[s.nav_state] || '#22c55e'; ctx.fill();
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke(); ctx.restore();
   }
+}
+
+// ---- Altitude phase toggle ----
+let current3DPhase = 'low';
+let current2DPhase = 'low';
+
+function set3DPhase(phase) {
+  current3DPhase = phase;
+  document.getElementById('btn-3d-low').style.opacity = phase === 'low' ? '1' : '0.5';
+  document.getElementById('btn-3d-high').style.opacity = phase === 'high' ? '1' : '0.5';
+  load3DIframe();
+}
+
+function set2DPhase(phase) {
+  current2DPhase = phase;
+  document.getElementById('btn-2d-low').style.opacity = phase === 'low' ? '1' : '0.5';
+  document.getElementById('btn-2d-high').style.opacity = phase === 'high' ? '1' : '0.5';
+  load2DHeatmapImage();
 }
 
 // ---- 3D Generation ----
@@ -673,17 +1360,20 @@ async function check3DExists() {
   try {
     const r = await fetch('/api/3d_status');
     const d = await r.json();
-    if (d.status === 'ready') load3DIframe();
-    // Also check if file exists from a previous session
-    const r2 = await fetch('/api/sensor_3d', {method: 'HEAD'});
+    if (d.status === 'ready') { load3DIframe(); return; }
+  } catch(e) {}
+  // Also try loading directly — file may exist from a previous session
+  try {
+    const r2 = await fetch('/api/sensor_3d?phase=' + current3DPhase);
     if (r2.ok) load3DIframe();
   } catch(e) {}
 }
 
 function load3DIframe() {
   const iframe = document.getElementById('sensor-3d-iframe');
-  if (iframe.style.display === 'block') return; // already loaded
-  iframe.src = '/api/sensor_3d?t=' + Date.now();
+  const mode = latestState && latestState.measure_mode;
+  const phase = mode === '3d' ? current3DPhase : '';
+  iframe.src = '/api/sensor_3d' + (phase ? '?phase=' + phase + '&' : '?') + 't=' + Date.now();
   iframe.style.display = 'block';
   document.getElementById('iframe-placeholder').style.display = 'none';
 }
@@ -754,7 +1444,9 @@ function load2DHeatmapImage() {
   const img = document.getElementById('heatmap-img');
   const canvas = document.getElementById('heatmap-canvas');
   canvas.style.display = 'none';
-  img.src = '/api/sensor_heatmap_2d?t=' + Date.now();
+  const mode = latestState && latestState.measure_mode;
+  const phase = mode === '3d' ? current2DPhase : '';
+  img.src = '/api/sensor_heatmap_2d' + (phase ? '?phase=' + phase + '&' : '?') + 't=' + Date.now();
   document.getElementById('heatmap-empty').style.display = 'none';
   document.getElementById('heatmap-section').style.display = 'block';
 }
@@ -847,6 +1539,13 @@ function initHeatmapCanvas() {
   canvas.height = img.naturalHeight;
   heatmapCanvasReady = true;
   canvas.style.display = 'none';
+}
+
+// ---- Gantry ----
+async function gantryHome() {
+  try {
+    await fetch('/api/gantry/home', {method: 'POST'});
+  } catch(e) { console.warn('Gantry home failed:', e); }
 }
 
 // ---- Boot ----

@@ -210,8 +210,13 @@ def _make_route_tube(p0, p1, radius, color, o3d):
 # Data loading
 # ---------------------------------------------------------------------------
 
-def _load_sensor_data_aligned():
-    """Load sensor data and align XY to waypoints.json when available."""
+def _load_sensor_data_aligned(phase_filter=None):
+    """Load sensor data and align XY to waypoints.json when available.
+
+    Args:
+        phase_filter: "low", "high", or None (all data). Filters by
+                      measurement_phase column if present.
+    """
     csv_path = os.path.join(DATA_DIR, "sensor_data.csv")
     if not os.path.exists(csv_path):
         print(f"ERROR: {csv_path} not found")
@@ -221,6 +226,9 @@ def _load_sensor_data_aligned():
     with open(csv_path, "r") as f:
         reader = csv.DictReader(f)
         for row in reader:
+            phase = row.get("measurement_phase", "")
+            if phase_filter and phase and phase != phase_filter:
+                continue
             raw = row.get("sensor_value", "")
             data.append({
                 "waypoint": int(row.get("waypoint", 0)),
@@ -465,7 +473,7 @@ def _export_ply(geometries, o3d):
 
 
 def _export_html(valid_data, vmin, vmax, floor_z, surface_mesh,
-                 sphere_radius, cloud, hide_cloud):
+                 sphere_radius, cloud, hide_cloud, html_filename="sensor_3d_interactive.html"):
     """Export an interactive HTML file using plotly."""
     try:
         import plotly.graph_objects as go
@@ -475,22 +483,30 @@ def _export_html(valid_data, vmin, vmax, floor_z, surface_mesh,
 
     fig = go.Figure()
 
-    # --- LiDAR point cloud (full resolution) ---
+    # --- LiDAR point cloud (downsampled for performance) ---
     if cloud is not None and not hide_cloud:
         pts = np.asarray(cloud.points)
         colors = np.asarray(cloud.colors) if cloud.has_colors() else None
+
+        # Downsample to ~50K points for reasonable file size / render speed
+        max_pts = 50000
+        if len(pts) > max_pts:
+            idx = np.random.default_rng(42).choice(len(pts), max_pts, replace=False)
+            pts = pts[idx]
+            if colors is not None:
+                colors = colors[idx]
 
         cloud_colors = [f"rgb({int(c[0]*255)},{int(c[1]*255)},{int(c[2]*255)})"
                         for c in colors] if colors is not None else "grey"
         fig.add_trace(go.Scatter3d(
             x=pts[:, 0], y=pts[:, 1], z=pts[:, 2],
             mode="markers",
-            marker=dict(size=1, color=cloud_colors, opacity=0.4),
+            marker=dict(size=1, color=cloud_colors, opacity=0.25),
             name="LiDAR",
             hoverinfo="skip",
         ))
 
-    # --- Surface mesh ---
+    # --- Interpolated surface mesh (sensor heatmap draped over environment) ---
     if surface_mesh is not None:
         import open3d as o3d
         verts = np.asarray(surface_mesh.vertices)
@@ -502,12 +518,12 @@ def _export_html(valid_data, vmin, vmax, floor_z, surface_mesh,
             i=tris[:, 0], j=tris[:, 1], k=tris[:, 2],
             vertexcolor=[f"rgb({int(c[0]*255)},{int(c[1]*255)},{int(c[2]*255)})"
                          for c in v_colors],
-            opacity=0.7,
+            opacity=0.8,
             name="Sensor Surface",
             hoverinfo="skip",
         ))
 
-    # --- Spheres (as scatter markers) ---
+    # --- Sensor markers (large, prominent) ---
     sx = [d["x"] for d in valid_data]
     sy = [d["y"] for d in valid_data]
     sz = [d["z"] for d in valid_data]
@@ -518,21 +534,22 @@ def _export_html(valid_data, vmin, vmax, floor_z, surface_mesh,
     fig.add_trace(go.Scatter3d(
         x=sx, y=sy, z=sz,
         mode="markers+text",
-        marker=dict(size=6, color=sphere_colors, line=dict(width=1, color="black")),
+        marker=dict(size=14, color=sphere_colors, line=dict(width=2, color="white"),
+                    opacity=0.95),
         text=[f"WP{d['waypoint']}: {d['sensor_value']:.0f}" for d in valid_data],
         textposition="top center",
-        textfont=dict(size=8),
+        textfont=dict(size=11, color="white"),
         name="Sensor Points",
     ))
 
-    # --- Cylinders (as vertical lines) ---
+    # --- Vertical stems from floor to sensor point ---
     for d in valid_data:
         color = sensor_to_color(d["sensor_value"], vmin, vmax)
         rgb = f"rgb({int(color[0]*255)},{int(color[1]*255)},{int(color[2]*255)})"
         fig.add_trace(go.Scatter3d(
             x=[d["x"], d["x"]], y=[d["y"], d["y"]], z=[floor_z, d["z"]],
             mode="lines",
-            line=dict(width=3, color=rgb),
+            line=dict(width=5, color=rgb),
             showlegend=False,
             hoverinfo="skip",
         ))
@@ -563,7 +580,7 @@ def _export_html(valid_data, vmin, vmax, floor_z, surface_mesh,
         margin=dict(l=0, r=0, t=40, b=0),
     )
 
-    html_path = os.path.join(DATA_DIR, "sensor_3d_interactive.html")
+    html_path = os.path.join(DATA_DIR, html_filename)
     fig.write_html(html_path, include_plotlyjs="cdn")
     print(f"Exported HTML: {html_path}")
 
@@ -575,15 +592,18 @@ def _export_html(valid_data, vmin, vmax, floor_z, surface_mesh,
 def generate_3d_html_only(sensor_vmin=None, sensor_vmax=None,
                           sphere_radius=0.12, surface_grid=0.06,
                           surface_radius=1.2, surface_lift=0.15,
-                          z_scale=0.002, hide_cloud=False):
+                          z_scale=0.002, hide_cloud=False,
+                          phase=None):
     """Generate interactive HTML (and PLY) without opening a viewer window.
 
     Designed to be called from a web server backend thread.
+    Args:
+        phase: "low", "high", or None (all data).
     Returns the path to the generated HTML file, or raises on error.
     """
     import open3d as o3d
 
-    sensor_data = _load_sensor_data_aligned()
+    sensor_data = _load_sensor_data_aligned(phase_filter=phase)
     if sensor_data is None:
         raise RuntimeError("sensor_data.csv not found")
 
@@ -602,26 +622,19 @@ def generate_3d_html_only(sensor_vmin=None, sensor_vmax=None,
         cloud = o3d.io.read_point_cloud(ply_path)
         pts = np.asarray(cloud.points)
         z = pts[:, 2]
-        z_norm = (z - z.min()) / (z.max() - z.min() + 1e-9)
-        n_pts = len(pts)
-        c = np.zeros((n_pts, 3))
-        m1 = z_norm < 0.25
-        s1 = z_norm[m1] / 0.25
-        c[m1] = np.column_stack([np.zeros_like(s1), s1, np.ones_like(s1)])
-        m2 = (z_norm >= 0.25) & (z_norm < 0.5)
-        s2 = (z_norm[m2] - 0.25) / 0.25
-        c[m2] = np.column_stack([np.zeros_like(s2), np.ones_like(s2), 1.0 - s2])
-        m3 = (z_norm >= 0.5) & (z_norm < 0.75)
-        s3 = (z_norm[m3] - 0.5) / 0.25
-        c[m3] = np.column_stack([s3, np.ones_like(s3), np.zeros_like(s3)])
-        m4 = z_norm >= 0.75
-        s4 = (z_norm[m4] - 0.75) / 0.25
-        c[m4] = np.column_stack([np.ones_like(s4), 1.0 - s4, np.zeros_like(s4)])
-        cloud.colors = o3d.utility.Vector3dVector(c)
+        floor_z = float(np.percentile(z, 10))
 
-    if cloud is not None:
-        cloud_z = np.asarray(cloud.points)[:, 2]
-        floor_z = float(np.percentile(cloud_z, 10))
+        # Remove floor points for cleaner 3D view
+        keep = z > (floor_z + 0.15)
+        pts = pts[keep]
+        cloud.points = o3d.utility.Vector3dVector(pts)
+
+        # Neutral gray with subtle height shading (dark → lighter)
+        z = pts[:, 2]
+        z_norm = (z - z.min()) / (z.max() - z.min() + 1e-9)
+        gray = 0.3 + 0.4 * z_norm
+        c = np.column_stack([gray, gray, gray])
+        cloud.colors = o3d.utility.Vector3dVector(c)
     else:
         floor_z = 0.0
 
@@ -638,10 +651,12 @@ def generate_3d_html_only(sensor_vmin=None, sensor_vmax=None,
         z_scale=z_scale,
     )
 
+    suffix = f"_{phase}" if phase else ""
+    html_filename = f"sensor_3d_interactive{suffix}.html"
     _export_html(valid_data, vmin, vmax, floor_z, surface_mesh,
-                 sphere_radius, cloud, hide_cloud)
+                 sphere_radius, cloud, hide_cloud, html_filename=html_filename)
 
-    html_path = os.path.join(DATA_DIR, "sensor_3d_interactive.html")
+    html_path = os.path.join(DATA_DIR, html_filename)
     return html_path
 
 
@@ -651,7 +666,8 @@ def generate_3d_html_only(sensor_vmin=None, sensor_vmax=None,
 
 def visualize_2d(sensor_data, sensor_vmin=None, sensor_vmax=None,
                  surface_grid=0.06, surface_radius=1.2,
-                 show_window=True, backend="TkAgg"):
+                 show_window=True, backend="TkAgg",
+                 output_filename="sensor_heatmap_2d.png"):
     """2D heatmap with IDW interpolation over LiDAR floor plan."""
     try:
         import matplotlib
@@ -732,7 +748,7 @@ def visualize_2d(sensor_data, sensor_vmin=None, sensor_vmax=None,
     ax.legend(loc="upper right")
     ax.grid(True, alpha=0.3)
 
-    png_path = os.path.join(DATA_DIR, "sensor_heatmap_2d.png")
+    png_path = os.path.join(DATA_DIR, output_filename)
     fig.savefig(png_path, dpi=150, bbox_inches="tight")
     print(f"Saved 2D heatmap to {png_path}")
 
@@ -745,16 +761,21 @@ def visualize_2d(sensor_data, sensor_vmin=None, sensor_vmax=None,
 
 
 def generate_2d_heatmap_only(sensor_vmin=None, sensor_vmax=None,
-                             surface_grid=0.06, surface_radius=1.2):
+                             surface_grid=0.06, surface_radius=1.2,
+                             phase=None):
     """Generate 2D heatmap PNG without opening a GUI window.
 
     Designed to be called from web backend threads.
+    Args:
+        phase: "low", "high", or None (all data).
     Returns the path to the generated PNG, or raises on error.
     """
-    sensor_data = _load_sensor_data_aligned()
+    sensor_data = _load_sensor_data_aligned(phase_filter=phase)
     if sensor_data is None:
         raise RuntimeError("sensor_data.csv not found")
 
+    suffix = f"_{phase}" if phase else ""
+    output_filename = f"sensor_heatmap_2d{suffix}.png"
     png_path = visualize_2d(
         sensor_data,
         sensor_vmin=sensor_vmin,
@@ -763,6 +784,7 @@ def generate_2d_heatmap_only(sensor_vmin=None, sensor_vmax=None,
         surface_radius=surface_radius,
         show_window=False,
         backend="Agg",
+        output_filename=output_filename,
     )
     if not png_path or not os.path.exists(png_path):
         raise RuntimeError("Failed to generate 2D heatmap PNG")

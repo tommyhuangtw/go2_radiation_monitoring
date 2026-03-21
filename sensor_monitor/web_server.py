@@ -95,8 +95,9 @@ _2d_gen_lock = threading.Lock()
 
 
 @app.post("/api/generate_3d")
-async def generate_3d():
+async def generate_3d(payload: dict = {}):
     global _3d_gen_status, _3d_gen_message
+    phase = payload.get("phase", None)
     with _3d_gen_lock:
         if _3d_gen_status == "generating":
             return JSONResponse({"status": "already_running"})
@@ -107,7 +108,7 @@ async def generate_3d():
         global _3d_gen_status, _3d_gen_message
         try:
             from sensor_surface_sphere_overlay import generate_3d_html_only
-            generate_3d_html_only()
+            generate_3d_html_only(phase=phase)
             _3d_gen_status = "ready"
             _3d_gen_message = "3D visualization generated"
         except Exception as e:
@@ -125,8 +126,12 @@ async def get_3d_status():
 
 
 @app.get("/api/sensor_3d")
-async def get_sensor_3d():
-    html_path = DATA_DIR / "sensor_3d_interactive.html"
+async def get_sensor_3d(phase: str = None):
+    suffix = f"_{phase}" if phase else ""
+    html_path = DATA_DIR / f"sensor_3d_interactive{suffix}.html"
+    if not html_path.exists():
+        # Fall back to default (no suffix)
+        html_path = DATA_DIR / "sensor_3d_interactive.html"
     if not html_path.exists():
         return JSONResponse({"error": "3D visualization not generated yet"}, status_code=404)
     return FileResponse(str(html_path), media_type="text/html",
@@ -164,12 +169,27 @@ async def get_2d_status():
 
 
 @app.get("/api/sensor_heatmap_2d")
-async def get_sensor_heatmap_2d():
-    png_path = DATA_DIR / "sensor_heatmap_2d.png"
+async def get_sensor_heatmap_2d(phase: str = None):
+    suffix = f"_{phase}" if phase else ""
+    png_path = DATA_DIR / f"sensor_heatmap_2d{suffix}.png"
+    if not png_path.exists():
+        png_path = DATA_DIR / "sensor_heatmap_2d.png"
     if not png_path.exists():
         return JSONResponse({"error": "2D heatmap not generated yet"}, status_code=404)
     return FileResponse(str(png_path), media_type="image/png",
                         headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/gantry/home")
+async def gantry_home():
+    """Re-home the gantry (set current position as 0mm)."""
+    if not navigator or not navigator.gantry_client:
+        return JSONResponse({"ok": False, "error": "Gantry not configured"}, status_code=400)
+    try:
+        result = navigator.gantry_client.home_here()
+        return JSONResponse({"ok": True, "state": result.get("state", {})})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
 @app.get("/api/sensor_data")
@@ -316,6 +336,9 @@ async def websocket_endpoint(ws: WebSocket):
             msg = json.loads(data)
             cmd = msg.get("cmd")
             if cmd == "start":
+                mode = msg.get("mode", "2d")
+                if mode in ("2d", "3d"):
+                    navigator.measure_mode = mode
                 _handle_start_patrol()
             elif cmd == "next":
                 navigator.web_continue()
@@ -355,6 +378,56 @@ async def on_startup():
 _patrol_thread = None
 
 
+def _auto_generate_viz():
+    """Auto-generate 3D + 2D visualizations after patrol completes."""
+    global _3d_gen_status, _3d_gen_message, _2d_gen_status, _2d_gen_message
+    mode = navigator.measure_mode if navigator else "2d"
+
+    def viz_worker():
+        global _3d_gen_status, _3d_gen_message, _2d_gen_status, _2d_gen_message
+
+        try:
+            _3d_gen_status = "generating"
+            from sensor_surface_sphere_overlay import generate_3d_html_only
+            # Always generate default (all data)
+            generate_3d_html_only(phase=None)
+            if mode == "3d":
+                generate_3d_html_only(phase="low")
+            _3d_gen_status = "ready"
+            _3d_gen_message = "3D visualization generated"
+            print("Auto-generated 3D visualization")
+        except Exception as e:
+            _3d_gen_status = "error"
+            _3d_gen_message = str(e)
+            print(f"Auto 3D generation failed: {e}")
+
+        try:
+            _2d_gen_status = "generating"
+            from sensor_surface_sphere_overlay import generate_2d_heatmap_only
+            generate_2d_heatmap_only(phase=None)
+            if mode == "3d":
+                generate_2d_heatmap_only(phase="low")
+            _2d_gen_status = "ready"
+            _2d_gen_message = "2D heatmap generated"
+            print("Auto-generated 2D heatmap")
+        except Exception as e:
+            _2d_gen_status = "error"
+            _2d_gen_message = str(e)
+            print(f"Auto 2D generation failed: {e}")
+
+        # Generate high-altitude versions for 3D mode
+        if mode == "3d":
+            try:
+                from sensor_surface_sphere_overlay import generate_3d_html_only, generate_2d_heatmap_only
+                generate_3d_html_only(phase="high")
+                generate_2d_heatmap_only(phase="high")
+                print("Auto-generated high-altitude visualizations")
+            except Exception as e:
+                print(f"High-altitude viz generation failed: {e}")
+
+    threading.Thread(target=viz_worker, daemon=True).start()
+
+
 def _handle_start_patrol():
     """Launch patrol in a background thread."""
     global _patrol_thread
@@ -373,6 +446,10 @@ def _handle_start_patrol():
                     navigator.patrol_error = "Failed to prepare patrol"
                 return
             navigator.start_patrol()
+
+            # Auto-generate visualizations after successful patrol
+            if navigator.nav_state == "done":
+                _auto_generate_viz()
         except Exception as e:
             navigator.nav_state = "error"
             navigator.patrol_error = str(e)
