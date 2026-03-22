@@ -123,7 +123,12 @@ runs on the Jetson and bridges DDS to TCP, so all PC scripts can work over WiFi.
 
 ```bash
 # Copy SDK + bridge scripts to Jetson
-scp -r unitree_sdk2py sensor_monitor/dds_bridge.py sensor_monitor/jetson_launch.sh unitree@192.168.0.207:~/
+scp -r unitree_sdk2py \
+    sensor_monitor/dds_bridge.py \
+    sensor_monitor/sensor_bridge.py \
+    sensor_monitor/gantry_control.py \
+    sensor_monitor/jetson_launch.sh \
+    unitree@192.168.0.207:~/
 
 # SSH in, make launch script executable, and install cyclonedds
 ssh unitree@192.168.0.207
@@ -182,142 +187,32 @@ pip3 install pyserial
 ls /dev/ttyUSB*
 ```
 
-## Quick Start
+## Getting Started
 
 > **Important — shared origin:** The robot's odometry resets to (0, 0, 0) on
-> every boot. All three scripts (mapping, route recording, auto-navigation)
-> must use the **same physical starting position and heading**. Mark the spot
-> and direction with tape before you begin. If you reboot between steps,
+> every boot. Steps 1-3 (mapping, route recording, verification) must happen in the
+> **same boot session** from the **same physical starting position and heading**.
+> Mark the spot and direction with tape. Step 4+ can be a later session — just
 > re-place the robot on the mark facing the same way.
 
-> **WiFi assumed:** The commands below use WiFi mode (`--bridge`) with
-> `dds_bridge.py` running on the Jetson (see [WiFi bridge deployment](#wifi-bridge-deployment)).
-> For direct ethernet, omit `--bridge` and use `--interface enp0s2`.
+### 1. Start Jetson services
 
-### 0. Start the bridge on Jetson
-
-```bash
-ssh unitree@192.168.0.207
-python3 ~/dds_bridge.py --interface eth0 --video --lidar
-```
-
-Leave this running for the entire session. All steps below connect to it.
-
-> **Tip:** For the full E2E flow (sensor + gantry), use `jetson_launch.sh` instead —
-> it starts all Jetson services in one command. See [Running the Full System](#running-the-full-system-e2e).
-
-### 1. Build the LiDAR map
-
-Place the robot on the taped starting mark (see above). Walk it slowly through the environment while the script records 3D point cloud data.
-
-```bash
-python sensor_monitor/lidar_mapper.py --bridge 192.168.0.207
-```
-
-The script continuously accumulates LiDAR scans into memory at 5 Hz (configurable
-via `--throttle`). Just walk the robot around — no button presses needed during
-mapping. Press `[q]` or Ctrl+C when done; the point cloud auto-saves on exit.
-
-Generates `sensor_monitor/data/point_cloud.ply` and `sensor_monitor/data/floor_plan.png`.
-
-### 2. Record monitoring waypoints
-
-**Same boot session, same starting position.** Walk the robot to each monitoring location and press Enter to mark it.
-
-```bash
-python sensor_monitor/route_recorder.py --bridge 192.168.0.207
-```
-
-Press `[q]` to save and quit. Generates `sensor_monitor/data/waypoints.json`.
-
-### 3. Verify alignment
-
-Check that waypoints align with the LiDAR map:
-
-```bash
-python sensor_monitor/sensor_heatmap.py --cloud-only
-```
-
-This runs locally on PC (no robot connection needed). The red spheres and line should overlay the point cloud correctly. If waypoints appear outside the map, re-record both in the same boot session.
-
-### 4a. Run autonomous monitoring (CLI)
-
-Place the robot on the taped starting mark (same position + heading as mapping), then:
-
-```bash
-python sensor_monitor/auto_navigator.py --bridge 192.168.0.207 --no-sensor
-```
-
-Remove `--no-sensor` if an Arduino sensor is connected. Add `--loop` for continuous patrol.
-
-### 4b. Run autonomous monitoring (Web UI)
-
-```bash
-# Navigation only (no sensor, no gantry — test robot movement):
-python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --no-sensor --no-gantry
-
-# Navigation + sensor, no gantry:
-python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --no-gantry
-
-# Navigation + gantry, no sensor (test gantry without Arduino):
-python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --no-sensor
-
-# Full system: sensor + gantry, 2D scan (default, gantry-height=140mm):
-python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207
-
-# Full system with explicit gantry height (tested configuration):
-python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --gantry-height 140 --measure-duration 5
-
-# Full system: sensor + gantry, 3D scan (dual altitude):
-python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --measure-mode 3d
-```
-
-> **Tip:** `--jetson HOST` is shorthand for `--bridge HOST --sensor-host HOST --gantry-host HOST`.
-> Add `--no-sensor` to skip the Arduino sensor connection. Individual flags (e.g., `--gantry-height 300`) still work alongside `--jetson`.
-
-Open `http://localhost:8080` in your browser. The web UI provides:
-
-- **Interactive floor plan** with robot position, waypoint status, zoom/pan (scroll + drag)
-- **Live camera** stream from the robot's front camera
-- **2D/3D scan mode selector** — choose before starting patrol
-- **Activity banner** showing current phase with countdown timers
-- **Start Patrol** / **Next Point** / **Emergency Stop** controls
-- **Gantry status** with height bar and direction indicator
-- **Sensor readings** with user-configurable safe/warning/danger thresholds
-- **3D/2D visualization** tabs with auto-generation after patrol completes
-
-### 5. Visualize results
-
-```bash
-# Both 3D + 2D
-python sensor_monitor/sensor_heatmap.py
-
-# 2D heatmap only
-python sensor_monitor/sensor_heatmap.py --mode 2d
-```
-
-![2D sensor heatmap overlaid on floor plan](docs/images/sensor_heatmap_2d.png)
-
-## Running the Full System (E2E)
-
-Once mapping and waypoint recording are done, here's the complete procedure to run
-the full patrol system with sensor + gantry. You need **1 SSH terminal to the Jetson**
-and **1 terminal on your PC**.
-
-### Jetson — Launch all services
+SSH into the Jetson and launch all bridge services:
 
 ```bash
 ssh unitree@192.168.0.207
 ./jetson_launch.sh
 ```
 
-This single script starts all three Jetson services:
-- **DDS bridge** (port 9877) — robot state + commands + video + LiDAR relay
-- **Sensor bridge** (port 9876) — Arduino sensor data relay (skipped if no Arduino detected)
-- **Gantry controller** (port 8090) — stepper motor HTTP API (skipped if no CP2102 detected)
+This starts all services automatically:
+- **DDS bridge** (port 9877) — robot state, commands, video, LiDAR relay
+- **Sensor bridge** (port 9876) — Arduino sensor relay (skipped if no Arduino)
+- **Gantry controller** (port 8090) — motor control API (skipped if no CP2102)
 
-It auto-detects hardware (`/dev/ttyACM*` for Arduino, `/dev/ttyUSB*` for CP2102),
-prints status for each service, and logs output to `/tmp/go2_logs/`. Press Ctrl+C to stop all.
+It auto-detects hardware, prints status, and logs to `/tmp/go2_logs/`. Press Ctrl+C to stop all.
+
+> **Important:** All scripts (`dds_bridge.py`, `sensor_bridge.py`, `gantry_control.py`) must be
+> in the **same directory** as `jetson_launch.sh` on the Jetson (typically `~/`).
 
 <details>
 <summary>Manual alternative (3 separate terminals)</summary>
@@ -335,45 +230,118 @@ python3 ~/gantry_control.py --web --port /dev/ttyUSB0
 
 </details>
 
-### PC — Auto Navigator + Web UI
+Leave the Jetson running for all following steps.
 
-Place the robot at its starting mark, then:
+### 2. Build the LiDAR map
+
+On your PC, place the robot on the taped starting mark. Walk it slowly through the environment:
 
 ```bash
 cd ~/Desktop/unitree_sdk2_python
 conda activate go2
+python sensor_monitor/lidar_mapper.py --bridge 192.168.0.207
+```
 
-# Tested configuration (sensor + gantry at 140mm):
+Just walk the robot around — the script records 3D scans at 5 Hz automatically.
+Press `[q]` or Ctrl+C when done. Generates `sensor_monitor/data/point_cloud.ply` and `floor_plan.png`.
+
+### 3. Record monitoring waypoints
+
+**Same boot session, same starting position.** Walk the robot to each monitoring location and press Enter to mark it.
+
+```bash
+python sensor_monitor/route_recorder.py --bridge 192.168.0.207
+```
+
+Press `[q]` to save and quit. Generates `sensor_monitor/data/waypoints.json`.
+
+### 4. Verify alignment
+
+Check that waypoints align with the LiDAR map (runs locally, no robot needed):
+
+```bash
+python sensor_monitor/sensor_heatmap.py --cloud-only
+```
+
+Red spheres and route line should overlay the point cloud correctly. If waypoints appear outside the map, re-record both in the same boot session.
+
+### 5. Run autonomous patrol
+
+Place the robot on the taped starting mark (same position + heading as mapping), then:
+
+```bash
+# Full system — tested configuration (sensor + gantry):
+python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207
+
+# Or with explicit params:
 python sensor_monitor/auto_navigator.py --web \
     --jetson 192.168.0.207 \
     --gantry-height 140 \
     --measure-duration 5
-
-# Or use the short form (uses default gantry-height=140):
-python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207
 ```
 
 > `--jetson 192.168.0.207` is the Jetson's WiFi IP. It sets `--bridge`, `--sensor-host`,
-> and `--gantry-host` to the same IP in one flag.
+> and `--gantry-host` to the same address in one flag.
 
-### Browser
+**Other configurations:**
 
-Open **http://localhost:8080**, select scan mode (2D or 3D), and click **Start Patrol**.
+```bash
+# Navigation only (test robot movement, no sensor/gantry):
+python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --no-sensor --no-gantry
+
+# Sensor only, no gantry:
+python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --no-gantry
+
+# Gantry only, no sensor (test motor without Arduino):
+python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --no-sensor
+
+# Dual-altitude 3D scan mode:
+python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --measure-mode 3d
+
+# CLI mode (no web UI):
+python sensor_monitor/auto_navigator.py --bridge 192.168.0.207 --no-sensor
+```
+
+> **Tip:** Add `--no-sensor` or `--no-gantry` to skip those connections.
+> Individual flags (e.g., `--gantry-height 300`) work alongside `--jetson`.
+
+### 6. Open the Web UI
+
+Open **http://localhost:8080** in your browser, then click **Start Patrol**.
 
 **2D Scan mode (default):**
 1. Gantry raises sensor at first waypoint
 2. Robot navigates to each waypoint → measures for 5s at elevated height
-3. Operator clicks **Next Point** to proceed
+3. Operator clicks **Continue Patrol** to proceed
 4. Gantry lowers after last waypoint
 
 **3D Scan mode** (`--measure-mode 3d`):
 1. Robot navigates to waypoint
-2. Sensor measures at ground level for 5s
-3. Gantry raises → sensor measures at elevated position for 5s
-4. Operator clicks **Next Point**
+2. Measures at ground level for 5s
+3. Gantry raises → measures at elevated position for 5s
+4. Operator clicks **Continue Patrol**
 5. Gantry lowers while robot navigates to next waypoint
 
-After all waypoints, the gantry returns home, the robot stands down, and 3D/2D visualizations are auto-generated.
+After all waypoints, the robot stands down and 3D/2D visualizations auto-generate.
+
+Web UI features:
+- **Interactive floor plan** with robot position, waypoint status, zoom/pan
+- **Live camera** stream
+- **Status banner** showing current phase in plain English
+- **Start Patrol** / **Continue** / **STOP ROBOT** controls
+- **Settings drawer** (gear icon) for thresholds, scan mode, advanced options
+- **3D Map** and **Heat Map** tabs with auto-generation after patrol
+
+### 7. Visualize results (CLI alternative)
+
+The web UI auto-generates visualizations after patrol. For CLI-only use:
+
+```bash
+python sensor_monitor/sensor_heatmap.py            # 3D + 2D
+python sensor_monitor/sensor_heatmap.py --mode 2d   # 2D only
+```
+
+![2D sensor heatmap overlaid on floor plan](docs/images/sensor_heatmap_2d.png)
 
 ## Script Reference
 
