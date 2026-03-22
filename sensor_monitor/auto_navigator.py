@@ -338,7 +338,7 @@ class AutoNavigator:
         self.sport_client.StopMove()
         time.sleep(0.1)
 
-    def move_forward_to_target(self, target_x, target_y, tolerance=0.05, speed=0.3, timeout=60.0):
+    def move_forward_to_target(self, target_x, target_y, tolerance=0.05, speed=0.5, timeout=60.0):
         """Move forward to target with PD-control steering and smooth deceleration."""
         print("  Moving forward...")
 
@@ -384,11 +384,11 @@ class AutoNavigator:
             yaw_error = self.normalize_angle(target_yaw - yaw)
 
             # Smooth deceleration: slow down proportionally as we approach
-            vx = min(speed, distance * 1.0)
-            vx = max(vx, 0.08)
+            vx = min(speed, distance * 2.0)
+            vx = max(vx, 0.1)
             # Extra slow for final approach
-            if distance < 0.15:
-                vx = min(vx, 0.08)
+            if distance < 0.08:
+                vx = min(vx, 0.1)
 
             # PD steering control
             Kp_steer = 1.2
@@ -991,16 +991,16 @@ if __name__ == "__main__":
                         help="Do not save timestamped history CSV copies")
     parser.add_argument("--rotate-tolerance", type=float, default=0.05,
                         help="Rotation tolerance in radians (default: 0.05, ~3 deg)")
-    parser.add_argument("--move-tolerance", type=float, default=0.05,
-                        help="Move-to-point tolerance in meters (default: 0.05, 5cm)")
+    parser.add_argument("--move-tolerance", type=float, default=0.08,
+                        help="Move-to-point tolerance in meters (default: 0.08, 8cm)")
     parser.add_argument("--video-port", type=int, default=9878,
                         help="Video relay TCP port on bridge host (default: 9878)")
     parser.add_argument("--gantry-host", default=None, metavar="HOST",
                         help="Gantry controller host (e.g. 192.168.0.207). Enables dual-altitude measurement.")
     parser.add_argument("--gantry-port", type=int, default=8090,
                         help="Gantry controller HTTP port (default: 8090)")
-    parser.add_argument("--gantry-height", type=float, default=150.0,
-                        help="Gantry raised height in mm (default: 150)")
+    parser.add_argument("--gantry-height", type=float, default=140.0,
+                        help="Gantry raised height in mm (default: 140)")
     parser.add_argument("--measure-duration", type=float, default=5.0,
                         help="Sensor measurement duration in seconds (default: 5.0)")
     parser.add_argument("--measure-mode", choices=["2d", "3d"], default="2d",
@@ -1009,9 +1009,15 @@ if __name__ == "__main__":
                         help="Launch web UI instead of CLI mode")
     parser.add_argument("--web-port", type=int, default=8080,
                         help="Web server port (default: 8080)")
+    parser.add_argument("--no-gantry", action="store_true",
+                        help="Skip gantry connection entirely")
     parser.add_argument("--jetson", default=None, metavar="HOST",
                         help="Jetson WiFi IP — shorthand for --bridge, --sensor-host, and --gantry-host")
     args = parser.parse_args()
+
+    # --no-gantry overrides any gantry-host setting
+    if args.no_gantry:
+        args.gantry_host = None
 
     # --jetson sets all three host flags at once (individual flags override)
     if args.jetson:
@@ -1019,7 +1025,7 @@ if __name__ == "__main__":
             args.bridge = args.jetson
         if args.sensor_host == "192.168.123.18":  # still at default
             args.sensor_host = args.jetson
-        if not args.gantry_host:
+        if not args.gantry_host and not args.no_gantry:
             args.gantry_host = args.jetson
 
     nav = AutoNavigator(args.interface,

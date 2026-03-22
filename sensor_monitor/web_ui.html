@@ -3,24 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Go2 Patrol Monitor</title>
+<title>Radiation Patrol Monitor</title>
 <style>
   :root {
-    --bg: #0b0b14;
-    --bg-panel: #131325;
-    --bg-header: #1a1a3e;
-    --border: #252560;
-    --accent: #4f8cff;
-    --accent-dim: #2a4a8a;
-    --green: #22c55e;
-    --yellow: #eab308;
-    --red: #ef4444;
-    --orange: #f97316;
-    --purple: #a855f7;
-    --text: #e8e8f0;
-    --text-muted: #7878a0;
-    --radius: 14px;
-    --shadow: 0 4px 24px rgba(0,0,0,0.45);
+    --bg: #f5f6fa; --bg-panel: #ffffff; --bg-header: #eef1f6;
+    --border: #d8dce6; --accent: #2563eb; --accent-dim: #dbeafe;
+    --green: #16a34a; --yellow: #ca8a04; --red: #dc2626;
+    --orange: #ea580c; --purple: #7c3aed;
+    --text: #1e293b; --text-muted: #64748b;
+    --radius: 12px; --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+    --safe-bg: #f0fdf4; --warn-bg: #fefce8; --danger-bg: #fef2f2;
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -30,16 +22,52 @@
   header {
     display: flex; justify-content: space-between; align-items: center;
     padding: 14px 24px;
-    background: linear-gradient(135deg, #0d0d2b, #1a1a3e);
+    background: var(--bg-header);
     border-bottom: 1px solid var(--border);
   }
-  header h1 { font-size: 1.25em; font-weight: 700; letter-spacing: -0.3px; }
-  header h1 span { color: var(--accent); }
+  header h1 { font-size: 1.25em; font-weight: 700; letter-spacing: -0.3px; display: flex; align-items: center; gap: 10px; }
   .header-right { display: flex; align-items: center; gap: 12px; }
-  #status-badge {
-    padding: 5px 16px; border-radius: 20px; font-size: 0.78em; font-weight: 700;
-    background: #444; text-transform: uppercase; letter-spacing: 0.6px;
+  .settings-btn {
+    width: 36px; height: 36px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg-panel); cursor: pointer; font-size: 1.2em; display: flex;
+    align-items: center; justify-content: center; transition: background 0.15s;
   }
+  .settings-btn:hover { background: var(--accent-dim); }
+
+  /* Connection dot */
+  .conn-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+  .conn-dot.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .conn-dot.off { background: var(--red); }
+
+  /* Status Banner */
+  .status-banner {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 24px; min-height: 72px;
+    background: var(--bg-header); border-bottom: 1px solid var(--border);
+    transition: background 0.4s, border-color 0.4s;
+  }
+  .status-banner.pulse {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: inset 0 0 0 0 transparent; }
+    50% { box-shadow: inset 0 0 30px 0 var(--pulse-color, rgba(37,99,235,0.1)); }
+  }
+  .status-banner-left { display: flex; align-items: center; gap: 14px; }
+  .status-icon { font-size: 1.8em; min-width: 44px; text-align: center; line-height: 1; }
+  .status-headline { font-size: 1.15em; font-weight: 700; }
+  .status-subtext { font-size: 0.85em; color: var(--text-muted); margin-top: 2px; }
+  .status-banner-right {
+    text-align: right; min-width: 120px;
+  }
+  .status-live-reading {
+    font-size: 2em; font-weight: 700; font-family: 'JetBrains Mono', 'Courier New', monospace;
+    line-height: 1.1;
+  }
+  .status-live-label { font-size: 0.75em; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .reading-safe { color: var(--green); }
+  .reading-warn { color: var(--yellow); }
+  .reading-danger { color: var(--red); }
 
   /* Tabs */
   .tab-bar {
@@ -62,7 +90,7 @@
 
   /* Grid layout */
   .main-grid {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+    display: grid; grid-template-columns: 3fr 2fr; gap: 14px;
     padding: 14px 24px; max-width: 1600px; margin: 0 auto;
   }
 
@@ -75,155 +103,61 @@
     padding: 10px 16px; background: var(--bg-header); font-size: 0.82em;
     font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px;
     display: flex; justify-content: space-between; align-items: center;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--border); color: var(--text-muted);
   }
   .panel-body { padding: 14px; }
   .full-width { grid-column: 1 / -1; }
 
   /* Floor plan */
-  #map-container { position: relative; width: 100%; flex: 1; background: #080810; border-radius: 8px; overflow: hidden; }
+  #map-container { position: relative; width: 100%; flex: 1; background: #f0f0f0; border-radius: 8px; overflow: hidden; }
   #floor-plan-img { display: block; width: 100%; height: auto; opacity: 0; transition: opacity 0.3s; }
   #floor-plan-img.loaded { opacity: 1; }
   #map-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: grab; }
   #map-canvas.dragging { cursor: grabbing; }
   #map-no-data { display: none; padding: 50px; text-align: center; color: var(--text-muted); }
   #map-zoom-controls { position: absolute; top: 8px; right: 8px; display: flex; flex-direction: column; gap: 4px; z-index: 10; }
-  #map-zoom-controls button { width: 30px; height: 30px; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px;
-    background: rgba(0,0,0,0.6); color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; line-height: 1;
-    display: flex; align-items: center; justify-content: center; }
-  #map-zoom-controls button:hover { background: rgba(60,60,80,0.8); }
+  #map-zoom-controls button { width: 30px; height: 30px; border: 1px solid var(--border); border-radius: 6px;
+    background: rgba(255,255,255,0.9); color: var(--text); font-size: 16px; font-weight: 700; cursor: pointer; line-height: 1;
+    display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow); }
+  #map-zoom-controls button:hover { background: #fff; }
 
-  /* Floor plan + camera same-height row */
-  #map-panel .panel-body, #camera-panel .panel-body { display: flex; flex-direction: column; }
-  #map-panel .panel-body { min-height: 350px; max-height: 450px; }
-  #camera-panel .panel-body { min-height: 350px; max-height: 450px; }
+  /* Floor plan + camera heights */
+  #map-panel .panel-body { display: flex; flex-direction: column; min-height: 350px; max-height: 550px; }
+  #camera-panel .panel-body { display: flex; flex-direction: column; }
 
   /* Camera */
-  #camera-feed { display: block; width: 100%; height: 100%; max-height: 450px; object-fit: contain; background: #000; border-radius: 8px; }
-  #camera-error { display: none; padding: 60px 20px; text-align: center; color: var(--text-muted); background: #080810; border-radius: 8px; flex: 1; }
+  #camera-feed { display: block; width: 100%; max-height: 280px; object-fit: contain; background: #f0f0f0; border-radius: 8px; }
+  #camera-error { display: none; padding: 40px 20px; text-align: center; color: var(--text-muted); background: #f0f0f0; border-radius: 8px; flex: 1; }
 
   /* Controls */
-  .controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
   .btn {
     padding: 10px 22px; border: none; border-radius: 8px; font-size: 0.9em;
     font-weight: 700; cursor: pointer; transition: all 0.15s; letter-spacing: 0.3px;
   }
   .btn:disabled { opacity: 0.35; cursor: not-allowed; }
-  .btn-start { background: var(--green); color: #fff; }
-  .btn-start:hover:not(:disabled) { background: #16a34a; transform: translateY(-1px); }
-  .btn-next { background: var(--accent); color: #fff; }
-  .btn-next:hover:not(:disabled) { background: #3b7aed; transform: translateY(-1px); }
-  .btn-stop { background: var(--red); color: #fff; }
-  .btn-stop:hover:not(:disabled) { background: #dc2626; transform: translateY(-1px); }
+  .btn-start {
+    background: var(--green); color: #fff;
+    padding: 16px 48px; font-size: 1.2em; border-radius: 12px;
+  }
+  .btn-start.compact { padding: 10px 22px; font-size: 0.9em; border-radius: 8px; }
+  .btn-start:hover:not(:disabled) { background: #15803d; transform: translateY(-1px); }
+  .btn-continue { background: var(--accent); color: #fff; }
+  .btn-continue:hover:not(:disabled) { background: #1d4ed8; transform: translateY(-1px); }
+  .btn-stop { background: transparent; color: var(--red); border: 2px solid var(--red); }
+  .btn-stop:hover:not(:disabled) { background: var(--danger-bg); }
   .btn-3d { background: var(--purple); color: #fff; font-size: 0.78em; padding: 6px 16px; border-radius: 6px; }
-  .btn-3d:hover:not(:disabled) { background: #9333ea; transform: translateY(-1px); }
+  .btn-3d:hover:not(:disabled) { background: #6d28d9; transform: translateY(-1px); }
 
   /* Progress */
   .progress-bar-bg {
-    width: 100%; height: 6px; background: #1e1e3a; border-radius: 3px; overflow: hidden; margin-bottom: 6px;
+    width: 100%; height: 6px; background: #e2e8f0; border-radius: 3px; overflow: hidden; margin-bottom: 6px;
   }
   .progress-bar-fill {
     height: 100%; background: linear-gradient(90deg, var(--accent), var(--green));
     transition: width 0.4s ease; border-radius: 3px;
   }
   .progress-text { font-size: 0.82em; color: var(--text-muted); }
-
-  /* Live data */
-  .data-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .data-item {
-    background: #0e0e1e; padding: 12px; border-radius: 10px; border: 1px solid #1e1e3a;
-  }
-  .data-label { font-size: 0.7em; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
-  .data-value { font-size: 1.25em; font-weight: 700; font-family: 'JetBrains Mono', 'Courier New', monospace; }
-  .data-item.sensor-safe .data-value { color: var(--green); }
-  .data-item.sensor-warn .data-value { color: var(--yellow); }
-  .data-item.sensor-danger .data-value { color: var(--red); }
-
-  /* Thresholds */
-  .threshold-row { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
-  .threshold-row label { font-size: 0.78em; color: var(--text-muted); }
-  .threshold-row input {
-    width: 68px; padding: 5px 8px; border: 1px solid #1e1e3a; border-radius: 6px;
-    background: #0e0e1e; color: var(--text); font-size: 0.82em;
-  }
-
-  /* Waypoint table */
-  .wp-table-wrap { max-height: 280px; overflow-y: auto; }
-  .wp-table-wrap::-webkit-scrollbar { width: 4px; }
-  .wp-table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.82em; }
-  th { background: var(--bg-header); padding: 8px 10px; text-align: left; position: sticky; top: 0; font-weight: 600; }
-  td { padding: 6px 10px; border-bottom: 1px solid #1a1a30; }
-  tr.wp-done td { color: var(--green); }
-  tr.wp-navigating td { color: var(--accent); }
-  tr.wp-collecting td { color: var(--yellow); }
-  tr.wp-collecting_low td { color: var(--yellow); }
-  tr.wp-gantry_raising td { color: var(--purple); }
-  tr.wp-collecting_high td { color: var(--orange); }
-  tr.wp-waiting td { color: var(--orange); }
-  tr.wp-pending td { color: var(--text-muted); }
-
-  /* 3D panel */
-  #panel-3d-body { padding: 0; }
-  #iframe-placeholder {
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    height: 500px; color: var(--text-muted); font-size: 0.9em; gap: 16px;
-    background: radial-gradient(ellipse at center, #12122a 0%, #0b0b14 70%);
-  }
-  #iframe-placeholder .hint { font-size: 0.8em; opacity: 0.6; }
-  #sensor-3d-iframe { width: 100%; height: 600px; border: none; display: none; background: #fff; }
-  .gen-status { font-size: 0.78em; font-weight: 400; color: var(--text-muted); }
-
-  /* Heatmap */
-  #heatmap-section { display: none; }
-  #heatmap-container { position: relative; width: 100%; background: #080810; border-radius: 8px; overflow: hidden; }
-  #heatmap-img { display: block; width: 100%; height: auto; opacity: 0; transition: opacity 0.3s; }
-  #heatmap-img.loaded { opacity: 1; }
-  #heatmap-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
-  .legend-bar {
-    display: flex; align-items: center; gap: 10px; padding: 10px 0; font-size: 0.78em; color: var(--text-muted);
-  }
-  .legend-gradient {
-    flex: 1; height: 12px; border-radius: 6px;
-    background: linear-gradient(90deg, #0000ff, #00ffff, #ffff00, #ff0000);
-  }
-
-  /* Connection dot */
-  .conn-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; }
-  .conn-dot.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
-  .conn-dot.off { background: var(--red); }
-
-  /* Spinner */
-  .spinner {
-    width: 32px; height: 32px; border: 3px solid var(--border);
-    border-top-color: var(--accent); border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  /* Activity Banner */
-  .activity-banner {
-    display: flex; align-items: center; gap: 14px;
-    padding: 14px 18px; border-radius: 10px; margin-top: 14px;
-    background: #1a1a3e; border: 1px solid var(--border);
-    transition: background 0.4s, border-color 0.4s;
-  }
-  .activity-banner.pulse {
-    animation: pulse-glow 2s ease-in-out infinite;
-  }
-  @keyframes pulse-glow {
-    0%, 100% { box-shadow: 0 0 0 0 transparent; }
-    50% { box-shadow: 0 0 18px 2px var(--pulse-color, rgba(79,140,255,0.3)); }
-  }
-  .activity-icon {
-    font-size: 1.8em; min-width: 44px; text-align: center; line-height: 1;
-  }
-  .activity-title {
-    font-size: 1.1em; font-weight: 700; letter-spacing: 0.2px;
-  }
-  .activity-detail {
-    font-size: 0.82em; color: var(--text-muted); margin-top: 2px;
-  }
 
   /* Step Pipeline */
   .step-pipeline {
@@ -235,7 +169,7 @@
   }
   .step-dot {
     width: 28px; height: 28px; border-radius: 50%;
-    background: #1e1e3a; border: 2px solid #333;
+    background: #e2e8f0; border: 2px solid var(--border);
     display: flex; align-items: center; justify-content: center;
     font-size: 0.7em; font-weight: 700; color: var(--text-muted);
     transition: all 0.3s;
@@ -244,32 +178,40 @@
     font-size: 0.65em; color: var(--text-muted); text-align: center;
     white-space: nowrap; transition: color 0.3s;
   }
-  .step-item.active .step-dot {
-    transform: scale(1.2);
-    border-width: 3px;
-  }
-  .step-item.done .step-dot {
-    background: var(--green); border-color: var(--green); color: #fff;
-  }
+  .step-item.active .step-dot { transform: scale(1.2); border-width: 3px; }
+  .step-item.done .step-dot { background: var(--green); border-color: var(--green); color: #fff; }
   .step-item.done .step-label { color: var(--green); }
   .step-item.active .step-label { color: var(--text); font-weight: 700; }
-  .step-line {
-    flex: 1; height: 2px; background: #333; min-width: 12px;
-    transition: background 0.3s;
-  }
+  .step-line { flex: 1; height: 2px; background: var(--border); min-width: 12px; transition: background 0.3s; }
   .step-line.done { background: var(--green); }
+
+  /* Waypoint table */
+  .wp-table-wrap { max-height: 280px; overflow-y: auto; }
+  .wp-table-wrap::-webkit-scrollbar { width: 4px; }
+  .wp-table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82em; }
+  th { background: var(--bg-header); padding: 8px 10px; text-align: left; position: sticky; top: 0; font-weight: 600; color: var(--text-muted); }
+  td { padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  tr.wp-done td { color: var(--green); }
+  tr.wp-navigating td { color: var(--accent); }
+  tr.wp-collecting td { color: var(--yellow); }
+  tr.wp-collecting_low td { color: var(--yellow); }
+  tr.wp-gantry_raising td { color: var(--purple); }
+  tr.wp-collecting_high td { color: var(--orange); }
+  tr.wp-waiting td { color: var(--orange); }
+  tr.wp-pending td { color: var(--text-muted); }
 
   /* Patrol summary bar */
   .patrol-summary {
     display: none; padding: 10px 14px; border-radius: 8px; margin-bottom: 10px;
-    background: #0e0e1e; border: 1px solid #1e1e3a;
+    background: var(--bg-header); border: 1px solid var(--border);
     font-size: 0.85em; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   }
   .patrol-summary .badge {
     padding: 3px 10px; border-radius: 12px; font-weight: 700; font-size: 0.82em;
   }
   .patrol-summary .badge-safe { background: var(--green); color: #fff; }
-  .patrol-summary .badge-warn { background: var(--yellow); color: #000; }
+  .patrol-summary .badge-warn { background: var(--yellow); color: #fff; }
   .patrol-summary .badge-danger { background: var(--red); color: #fff; }
   .patrol-summary .stat { color: var(--text-muted); }
   .patrol-summary .stat b { color: var(--text); }
@@ -279,61 +221,150 @@
   td.cell-warn { color: var(--yellow); font-weight: 700; }
   td.cell-danger { color: var(--red); font-weight: 700; }
   td.cell-delta { font-size: 0.85em; color: var(--text-muted); }
-  tr.wp-max-reading { background: rgba(239,68,68,0.1); }
+  tr.wp-max-reading { background: var(--danger-bg); }
 
-  /* Gantry vertical bar */
+  /* 3D panel */
+  #panel-3d-body { padding: 0; }
+  #iframe-placeholder {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 500px; color: var(--text-muted); font-size: 0.9em; gap: 16px;
+    background: radial-gradient(ellipse at center, #f8fafc 0%, #eef1f6 70%);
+  }
+  #iframe-placeholder .hint { font-size: 0.8em; opacity: 0.6; }
+  #sensor-3d-iframe { width: 100%; height: 600px; border: none; display: none; background: #fff; }
+  .gen-status { font-size: 0.78em; font-weight: 400; color: var(--text-muted); }
+
+  /* Heatmap */
+  #heatmap-section { display: none; }
+  #heatmap-container { position: relative; width: 100%; background: #f0f0f0; border-radius: 8px; overflow: hidden; }
+  #heatmap-img { display: block; width: 100%; height: auto; opacity: 0; transition: opacity 0.3s; }
+  #heatmap-img.loaded { opacity: 1; }
+  #heatmap-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+  .legend-bar {
+    display: flex; align-items: center; gap: 10px; padding: 10px 0; font-size: 0.78em; color: var(--text-muted);
+  }
+  .legend-gradient {
+    flex: 1; height: 12px; border-radius: 6px;
+    background: linear-gradient(90deg, #0000ff, #00ffff, #ffff00, #ff0000);
+  }
+
+  /* Spinner */
+  .spinner {
+    width: 32px; height: 32px; border: 3px solid var(--border);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Settings Overlay */
+  .settings-backdrop {
+    display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.3); z-index: 900;
+  }
+  .settings-backdrop.open { display: block; }
+  .settings-overlay {
+    position: fixed; top: 0; right: -360px; width: 360px; height: 100%;
+    background: var(--bg-panel); border-left: 1px solid var(--border);
+    box-shadow: -4px 0 24px rgba(0,0,0,0.1);
+    z-index: 1000; padding: 24px; overflow-y: auto;
+    transition: right 0.3s ease;
+  }
+  .settings-overlay.open { right: 0; }
+  .settings-section { margin-bottom: 20px; }
+  .settings-label { font-size: 0.78em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 8px; }
+  .settings-section select {
+    width: 100%; padding: 8px 12px; border-radius: 8px; background: var(--bg-header);
+    color: var(--text); border: 1px solid var(--border); font-size: 0.9em; font-weight: 600;
+  }
+  .settings-section input[type="number"] {
+    width: 80px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg-header); color: var(--text); font-size: 0.85em; margin-left: 4px; margin-right: 12px;
+  }
+  .settings-section label { font-size: 0.82em; color: var(--text-muted); }
+  .settings-position { font-family: 'JetBrains Mono', 'Courier New', monospace; font-size: 0.9em; }
+  .settings-position span { font-weight: 700; }
+
+  /* Gantry vertical bar (settings) */
   .gantry-vis {
-    display: flex; align-items: flex-end; gap: 8px; height: 48px;
+    display: flex; align-items: flex-end; gap: 8px; height: 48px; margin-top: 8px;
   }
   .gantry-bar-track {
-    width: 18px; height: 100%; background: #1e1e3a; border-radius: 4px;
-    position: relative; overflow: hidden; border: 1px solid #333;
+    width: 18px; height: 100%; background: #e2e8f0; border-radius: 4px;
+    position: relative; overflow: hidden; border: 1px solid var(--border);
   }
   .gantry-bar-fill {
     position: absolute; bottom: 0; left: 0; right: 0;
     background: linear-gradient(to top, var(--accent), var(--purple));
     border-radius: 0 0 3px 3px; transition: height 0.4s ease;
   }
-  .gantry-bar-info {
-    display: flex; flex-direction: column; justify-content: flex-end; gap: 2px;
-  }
+  .gantry-bar-info { display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; }
   .gantry-bar-pos { font-size: 1.1em; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
   .gantry-bar-dir { font-size: 0.75em; color: var(--text-muted); }
 
   /* Responsive */
-  @media (max-width: 900px) {
+  @media (max-width: 1024px) {
     .main-grid { grid-template-columns: 1fr; padding: 10px; gap: 10px; }
+    .btn-start { width: 100%; }
+    .btn-continue { width: 100%; }
+    .btn-stop { width: 100%; }
+    .controls { flex-direction: column; }
+    .status-banner { flex-direction: column; gap: 8px; text-align: center; }
+    .status-banner-right { text-align: center; }
+  }
+  @media (max-width: 768px) {
     .tab-bar { padding: 0 10px; }
     #sensor-3d-iframe { height: 400px; }
     .step-pipeline { gap: 0; }
     .step-label { font-size: 0.55em; }
     .step-dot { width: 22px; height: 22px; font-size: 0.6em; }
+    td.col-position { display: none; }
+    th.col-position { display: none; }
+    .btn { min-height: 44px; }
+    .settings-overlay { width: 100%; right: -100%; }
   }
 </style>
 </head>
 <body>
 
 <header>
-  <h1><span>Go2</span> Patrol Monitor</h1>
+  <h1>
+    <span class="conn-dot off" id="conn-dot"></span>
+    Radiation Patrol Monitor
+  </h1>
   <div class="header-right">
-    <span id="status-badge">Connecting...</span>
+    <button class="settings-btn" onclick="toggleSettings()" title="Settings">&#9881;</button>
   </div>
 </header>
 
+<!-- Status Banner -->
+<div class="status-banner" id="status-banner">
+  <div class="status-banner-left">
+    <span class="status-icon" id="status-icon">&#9208;</span>
+    <div>
+      <div class="status-headline" id="status-headline">Ready to Begin</div>
+      <div class="status-subtext" id="status-subtext">Press Start Patrol to begin radiation survey</div>
+    </div>
+  </div>
+  <div class="status-banner-right">
+    <div class="status-live-reading" id="status-live-reading">--</div>
+    <div class="status-live-label">Radiation Level</div>
+  </div>
+</div>
+
 <!-- Tabs -->
 <div class="tab-bar">
-  <button class="tab-btn active" onclick="switchTab('monitor')">Monitor</button>
-  <button class="tab-btn" onclick="switchTab('3d')">3D Visualization</button>
-  <button class="tab-btn" onclick="switchTab('heatmap')">2D Heatmap</button>
+  <button class="tab-btn active" onclick="switchTab('monitor')">Live Patrol</button>
+  <button class="tab-btn" onclick="switchTab('3d')">3D Map</button>
+  <button class="tab-btn" onclick="switchTab('heatmap')">Heat Map</button>
 </div>
 
 <!-- ============================================================= -->
-<!-- TAB: Monitor -->
+<!-- TAB: Live Patrol -->
 <!-- ============================================================= -->
 <div class="tab-content active" id="tab-monitor">
 <div class="main-grid">
 
-  <!-- Floor Plan -->
+  <!-- Floor Plan (left, larger) -->
   <div class="panel" id="map-panel">
     <div class="panel-header">Floor Plan</div>
     <div class="panel-body">
@@ -347,116 +378,56 @@
           <button onclick="mapZoomBtn(1/1.4)" title="Zoom out">&minus;</button>
           <button onclick="mapZoomReset()" title="Reset view" style="font-size:11px;">&#8634;</button>
         </div>
-        <div id="map-no-data">No floor plan available.<br>Run lidar_mapper.py first.</div>
+        <div id="map-no-data">No floor plan loaded.<br>Please contact your technician.</div>
       </div>
     </div>
   </div>
 
-  <!-- Camera Feed -->
-  <div class="panel" id="camera-panel">
-    <div class="panel-header">Camera Feed</div>
-    <div class="panel-body">
-      <img id="camera-feed" src="/video" alt="Camera Feed"
-           onerror="this.style.display='none'; document.getElementById('camera-error').style.display='block';">
-      <div id="camera-error">Camera unavailable</div>
+  <!-- Right column: Camera + Controls stacked -->
+  <div style="display:flex; flex-direction:column; gap:14px;">
+    <!-- Camera Feed -->
+    <div class="panel" id="camera-panel">
+      <div class="panel-header">Camera Feed</div>
+      <div class="panel-body">
+        <img id="camera-feed" src="/video" alt="Camera Feed"
+             onerror="this.style.display='none'; document.getElementById('camera-error').style.display='block';">
+        <div id="camera-error">Camera unavailable</div>
+      </div>
     </div>
-  </div>
 
-  <!-- Controls + Progress -->
-  <div class="panel">
-    <div class="panel-header">Controls</div>
-    <div class="panel-body">
-      <div class="controls">
-        <select id="measure-mode" style="padding:8px 12px; border-radius:8px; background:var(--bg-header); color:var(--text); border:1px solid var(--border); font-size:0.9em; font-weight:600;">
-          <option value="2d" selected>2D Scan (single height)</option>
-          <option value="3d">3D Scan (dual height)</option>
-        </select>
-        <button class="btn btn-start" id="btn-start" onclick="startPatrol()">Start Patrol</button>
-        <button class="btn btn-next" id="btn-next" onclick="sendCmd('next')" disabled>Next Point</button>
-        <button class="btn btn-stop" id="btn-stop" onclick="sendCmd('stop')">Emergency Stop</button>
-      </div>
-      <div class="progress-bar-bg">
-        <div class="progress-bar-fill" id="progress-fill" style="width: 0%"></div>
-      </div>
-      <div class="progress-text" id="progress-text">Waiting to start...</div>
-
-      <!-- Activity Banner -->
-      <div class="activity-banner" id="activity-banner">
-        <span class="activity-icon" id="activity-icon"></span>
-        <div>
-          <div class="activity-title" id="activity-title">Ready</div>
-          <div class="activity-detail" id="activity-detail">Click Start Patrol to begin</div>
+    <!-- Controls + Progress -->
+    <div class="panel">
+      <div class="panel-header">Controls</div>
+      <div class="panel-body">
+        <div class="controls">
+          <button class="btn btn-start" id="btn-start" onclick="startPatrol()">Start Patrol</button>
+          <button class="btn btn-continue" id="btn-next" onclick="sendCmd('next')" disabled style="display:none;">Continue Patrol</button>
+          <button class="btn btn-stop" id="btn-stop" onclick="sendCmd('stop')">STOP ROBOT</button>
         </div>
-      </div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="progress-fill" style="width: 0%"></div>
+        </div>
+        <div class="progress-text" id="progress-text">Waiting to start...</div>
 
-      <!-- Step Pipeline (per-waypoint cycle) -->
-      <div class="step-pipeline" id="step-pipeline" style="display:none;">
-        <div class="step-item" id="step-nav"><div class="step-dot">1</div><div class="step-label">Navigate</div></div>
-        <div class="step-line" id="line-nav"></div>
-        <div class="step-item" id="step-low"><div class="step-dot">2</div><div class="step-label">Measure Low</div></div>
-        <div class="step-line" id="line-low"></div>
-        <div class="step-item" id="step-gantry"><div class="step-dot">3</div><div class="step-label">Gantry Up</div></div>
-        <div class="step-line" id="line-gantry"></div>
-        <div class="step-item" id="step-high"><div class="step-dot">4</div><div class="step-label">Measure High</div></div>
-        <div class="step-line" id="line-high"></div>
-        <div class="step-item" id="step-wait"><div class="step-dot">5</div><div class="step-label">Next?</div></div>
+        <!-- Step Pipeline (per-waypoint cycle) -->
+        <div class="step-pipeline" id="step-pipeline" style="display:none;">
+          <div class="step-item" id="step-nav"><div class="step-dot">1</div><div class="step-label">Move</div></div>
+          <div class="step-line" id="line-nav"></div>
+          <div class="step-item" id="step-low"><div class="step-dot">2</div><div class="step-label">Scan (ground)</div></div>
+          <div class="step-line" id="line-low"></div>
+          <div class="step-item" id="step-gantry"><div class="step-dot">3</div><div class="step-label">Raise Arm</div></div>
+          <div class="step-line" id="line-gantry"></div>
+          <div class="step-item" id="step-high"><div class="step-dot">4</div><div class="step-label">Scan (raised)</div></div>
+          <div class="step-line" id="line-high"></div>
+          <div class="step-item" id="step-wait"><div class="step-dot">5</div><div class="step-label">Continue?</div></div>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- Live Data -->
-  <div class="panel">
-    <div class="panel-header">Live Data</div>
-    <div class="panel-body">
-      <div class="data-grid">
-        <div class="data-item">
-          <div class="data-label">Position X</div>
-          <div class="data-value" id="val-x">--</div>
-        </div>
-        <div class="data-item">
-          <div class="data-label">Position Y</div>
-          <div class="data-value" id="val-y">--</div>
-        </div>
-        <div class="data-item">
-          <div class="data-label">Heading</div>
-          <div class="data-value" id="val-yaw">--</div>
-        </div>
-        <div class="data-item" id="sensor-item">
-          <div class="data-label">
-            <span class="conn-dot off" id="sensor-dot"></span>Sensor
-          </div>
-          <div class="data-value" id="val-sensor">N/A</div>
-        </div>
-        <div class="data-item" id="gantry-item" style="display:none;">
-          <div class="data-label">Gantry Height</div>
-          <div class="gantry-vis">
-            <div class="gantry-bar-track">
-              <div class="gantry-bar-fill" id="gantry-bar-fill" style="height:0%"></div>
-            </div>
-            <div class="gantry-bar-info">
-              <div class="gantry-bar-pos" id="val-gantry">0mm</div>
-              <div class="gantry-bar-dir" id="gantry-dir"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="threshold-row">
-        <label>Safe &lt;</label>
-        <input type="number" id="thresh-safe" value="300" onchange="saveThresholds()">
-        <label>Warn &lt;</label>
-        <input type="number" id="thresh-warn" value="600" onchange="saveThresholds()">
-        <label>Danger &ge;</label>
-        <input type="number" id="thresh-danger" value="600" disabled
-               style="background:transparent; border-color:#1e1e3a;">
-        <button class="btn" style="padding:4px 12px; font-size:0.78em; background:var(--accent-dim); color:var(--text); display:none;"
-                id="btn-gantry-home" onclick="gantryHome()">Home Gantry</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Waypoint Log -->
+  <!-- Waypoint Results (full-width) -->
   <div class="panel full-width">
-    <div class="panel-header">Waypoint Log</div>
+    <div class="panel-header">Waypoint Results</div>
     <div class="panel-body">
       <div class="patrol-summary" id="patrol-summary" style="display:none;">
         <span class="stat"><b>Results:</b></span>
@@ -468,7 +439,7 @@
       </div>
       <div class="wp-table-wrap">
         <table>
-          <thead><tr><th>#</th><th>Position</th><th id="th-low">Low</th><th id="th-high">High</th><th id="th-delta">Delta</th><th id="th-value" style="display:none;">Value</th><th>Status</th></tr></thead>
+          <thead><tr><th>Point</th><th class="col-position">Position</th><th id="th-low">Ground Level</th><th id="th-high">Raised Level</th><th id="th-delta">Delta</th><th id="th-value" style="display:none;">Radiation Level</th><th>Status</th></tr></thead>
           <tbody id="wp-tbody"></tbody>
         </table>
       </div>
@@ -479,28 +450,28 @@
 </div>
 
 <!-- ============================================================= -->
-<!-- TAB: 3D Visualization -->
+<!-- TAB: 3D Map -->
 <!-- ============================================================= -->
 <div class="tab-content" id="tab-3d">
 <div class="main-grid">
   <div class="panel full-width">
     <div class="panel-header">
-      3D Sensor Visualization
+      3D Radiation Map
       <div style="display:flex; align-items:center; gap:12px;">
         <span class="gen-status" id="gen3d-status"></span>
         <span id="phase-toggle-3d" style="display:none;">
           <button class="btn" style="padding:4px 14px; font-size:0.75em; border-radius:6px;"
-                  id="btn-3d-low" onclick="set3DPhase('low')">Low Alt</button>
+                  id="btn-3d-low" onclick="set3DPhase('low')">Ground Level</button>
           <button class="btn" style="padding:4px 14px; font-size:0.75em; border-radius:6px; opacity:0.5;"
-                  id="btn-3d-high" onclick="set3DPhase('high')">High Alt</button>
+                  id="btn-3d-high" onclick="set3DPhase('high')">Raised Level</button>
         </span>
-        <button class="btn btn-3d" id="btn-gen3d" onclick="generate3D()">Generate 3D View</button>
+        <button class="btn btn-3d" id="btn-gen3d" onclick="generate3D()">Build 3D Map</button>
       </div>
     </div>
     <div id="panel-3d-body">
       <div id="iframe-placeholder">
         <div class="spinner" id="gen-spinner" style="display:none;"></div>
-        <div id="placeholder-text">Click "Generate 3D View" to create an interactive visualization</div>
+        <div id="placeholder-text">Click "Build 3D Map" to create an interactive visualization</div>
         <div class="hint">Requires sensor_data.csv from a completed patrol</div>
       </div>
       <iframe id="sensor-3d-iframe" loading="lazy"></iframe>
@@ -510,22 +481,22 @@
 </div>
 
 <!-- ============================================================= -->
-<!-- TAB: 2D Heatmap -->
+<!-- TAB: Heat Map -->
 <!-- ============================================================= -->
 <div class="tab-content" id="tab-heatmap">
 <div class="main-grid">
   <div class="panel full-width" id="heatmap-section">
     <div class="panel-header">
-      2D Sensor Heatmap
+      2D Radiation Heat Map
       <div style="display:flex; align-items:center; gap:12px;">
         <span class="gen-status" id="gen2d-status"></span>
         <span id="phase-toggle-2d" style="display:none;">
           <button class="btn" style="padding:4px 14px; font-size:0.75em; border-radius:6px;"
-                  id="btn-2d-low" onclick="set2DPhase('low')">Low Alt</button>
+                  id="btn-2d-low" onclick="set2DPhase('low')">Ground Level</button>
           <button class="btn" style="padding:4px 14px; font-size:0.75em; border-radius:6px; opacity:0.5;"
-                  id="btn-2d-high" onclick="set2DPhase('high')">High Alt</button>
+                  id="btn-2d-high" onclick="set2DPhase('high')">Raised Level</button>
         </span>
-        <button class="btn btn-3d" id="btn-gen2d" onclick="generate2DHeatmap()">Generate 2D Heatmap</button>
+        <button class="btn btn-3d" id="btn-gen2d" onclick="generate2DHeatmap()">Build Heat Map</button>
       </div>
     </div>
     <div class="panel-body">
@@ -545,6 +516,63 @@
     </div>
   </div>
 </div>
+</div>
+
+<!-- Settings Drawer -->
+<div class="settings-backdrop" id="settings-backdrop" onclick="toggleSettings()"></div>
+<div class="settings-overlay" id="settings-overlay">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+    <h3 style="font-size:1.1em; font-weight:700;">Settings</h3>
+    <button onclick="toggleSettings()" style="width:32px; height:32px; border-radius:8px; border:1px solid var(--border); background:var(--bg-header); cursor:pointer; font-size:1.1em; display:flex; align-items:center; justify-content:center;">&#10005;</button>
+  </div>
+  <!-- Scan Mode -->
+  <div class="settings-section">
+    <div class="settings-label">Scan Mode</div>
+    <select id="measure-mode">
+      <option value="2d" selected>Standard Scan</option>
+      <option value="3d">Detailed Scan (two heights)</option>
+    </select>
+  </div>
+  <!-- Alert Thresholds -->
+  <div class="settings-section">
+    <div class="settings-label">Alert Thresholds</div>
+    <div style="margin-top:6px;">
+      <label>Safe below</label>
+      <input type="number" id="thresh-safe" value="300" onchange="saveThresholds()">
+      <label>Warning below</label>
+      <input type="number" id="thresh-warn" value="600" onchange="saveThresholds()">
+    </div>
+  </div>
+  <!-- Robot Position (read-only) -->
+  <div class="settings-section">
+    <div class="settings-label">Robot Position</div>
+    <div class="settings-position">
+      X: <span id="val-x">--</span> &nbsp; Y: <span id="val-y">--</span> &nbsp; Heading: <span id="val-yaw">--</span>
+    </div>
+  </div>
+  <!-- Sensor Arm -->
+  <div class="settings-section" id="settings-gantry" style="display:none;">
+    <div class="settings-label">Sensor Arm</div>
+    <div class="gantry-vis">
+      <div class="gantry-bar-track">
+        <div class="gantry-bar-fill" id="gantry-bar-fill" style="height:0%"></div>
+      </div>
+      <div class="gantry-bar-info">
+        <div class="gantry-bar-pos" id="val-gantry">0mm</div>
+        <div class="gantry-bar-dir" id="gantry-dir"></div>
+      </div>
+    </div>
+    <button class="btn" style="margin-top:8px; padding:6px 16px; font-size:0.82em; background:var(--accent-dim); color:var(--text); border:1px solid var(--border);"
+            id="btn-gantry-home" onclick="gantryHome()">Home Sensor Arm</button>
+  </div>
+  <!-- Sensor connection -->
+  <div class="settings-section">
+    <div class="settings-label">Sensor Connection</div>
+    <div style="display:flex; align-items:center; gap:6px;">
+      <span class="conn-dot off" id="sensor-dot"></span>
+      <span id="sensor-conn-text" style="font-size:0.85em;">Disconnected</span>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -622,15 +650,24 @@ function toDisplayPose(pose, stateForInit = null) {
   };
 }
 
+// ---- Settings Drawer ----
+function toggleSettings() {
+  const overlay = document.getElementById('settings-overlay');
+  const backdrop = document.getElementById('settings-backdrop');
+  const isOpen = overlay.classList.contains('open');
+  overlay.classList.toggle('open', !isOpen);
+  backdrop.classList.toggle('open', !isOpen);
+}
+
 // ---- Tab switching ----
 function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
   document.querySelectorAll('.tab-btn').forEach(b => {
-    if ((name === 'monitor' && b.textContent === 'Monitor') ||
-        (name === '3d' && b.textContent === '3D Visualization') ||
-        (name === 'heatmap' && b.textContent === '2D Heatmap')) {
+    if ((name === 'monitor' && b.textContent === 'Live Patrol') ||
+        (name === '3d' && b.textContent === '3D Map') ||
+        (name === 'heatmap' && b.textContent === 'Heat Map')) {
       b.classList.add('active');
     }
   });
@@ -657,7 +694,6 @@ function loadThresholds() {
 function saveThresholds() {
   const safe = parseFloat(document.getElementById('thresh-safe').value) || 300;
   const warn = parseFloat(document.getElementById('thresh-warn').value) || 600;
-  document.getElementById('thresh-danger').value = warn;
   localStorage.setItem('go2_thresholds', JSON.stringify({safe, warn}));
 }
 function getThresholds() {
@@ -685,12 +721,10 @@ function connectWebSocket() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(`${proto}//${location.host}/ws`);
   ws.onopen = () => {
-    document.getElementById('status-badge').textContent = 'Connected';
-    document.getElementById('status-badge').style.background = 'var(--green)';
+    document.getElementById('conn-dot').className = 'conn-dot on';
   };
   ws.onclose = () => {
-    document.getElementById('status-badge').textContent = 'Disconnected';
-    document.getElementById('status-badge').style.background = 'var(--red)';
+    document.getElementById('conn-dot').className = 'conn-dot off';
     setTimeout(connectWebSocket, 2000);
   };
   ws.onmessage = (evt) => {
@@ -719,49 +753,77 @@ function updateUI(s) {
   const displayPose = toDisplayPose(s.position, s) || s.position;
   lastNavState = s.nav_state;
 
-  const badge = document.getElementById('status-badge');
-  const labels = { idle:'Idle', standing_up:'Standing Up', navigating:'Navigating', collecting:'Collecting', collecting_low:'Measuring (Low)', gantry_raising:'Gantry Rising', collecting_high:'Measuring (High)', waiting:'Waiting', done:'Complete', error:'Error' };
-  const colors = { idle:'#444', standing_up:'var(--yellow)', navigating:'var(--accent)', collecting:'var(--purple)', collecting_low:'var(--yellow)', gantry_raising:'var(--purple)', collecting_high:'var(--orange)', waiting:'var(--orange)', done:'var(--green)', error:'var(--red)' };
-  badge.textContent = labels[s.nav_state] || s.nav_state;
-  badge.style.background = colors[s.nav_state] || '#444';
-
   const isIdle = ['idle','done','error'].includes(s.nav_state);
-  document.getElementById('btn-start').disabled = !isIdle;
-  document.getElementById('measure-mode').disabled = !isIdle;
+  const btnStart = document.getElementById('btn-start');
+  btnStart.disabled = !isIdle;
+  const modeSelect = document.getElementById('measure-mode');
+  modeSelect.disabled = !isIdle;
+
+  // Disable "Detailed Scan" option when no gantry connected
+  const detailedOption = modeSelect.querySelector('option[value="3d"]');
+  if (!s.gantry) {
+    detailedOption.disabled = true;
+    detailedOption.textContent = 'Detailed Scan (no sensor arm)';
+    if (modeSelect.value === '3d') modeSelect.value = '2d';
+  } else {
+    detailedOption.disabled = false;
+    detailedOption.textContent = 'Detailed Scan (two heights)';
+  }
+
+  // Start button: hero size when idle, compact during patrol
+  if (isIdle && s.nav_state !== 'done') {
+    btnStart.classList.remove('compact');
+    btnStart.style.display = '';
+  } else if (s.nav_state === 'done' || s.nav_state === 'error') {
+    btnStart.classList.remove('compact');
+    btnStart.style.display = '';
+  } else {
+    btnStart.classList.add('compact');
+  }
 
   // Show/hide Low/High phase toggles based on measure mode
   const is3D = s.measure_mode === '3d';
   document.getElementById('phase-toggle-3d').style.display = is3D ? 'inline' : 'none';
   document.getElementById('phase-toggle-2d').style.display = is3D ? 'inline' : 'none';
-  document.getElementById('btn-next').disabled = s.nav_state !== 'waiting';
 
+  // Continue button: only visible in waiting state
+  const btnNext = document.getElementById('btn-next');
+  btnNext.disabled = s.nav_state !== 'waiting';
+  btnNext.style.display = s.nav_state === 'waiting' ? '' : 'none';
+
+  // Robot position in settings drawer
   document.getElementById('val-x').textContent = displayPose.x.toFixed(3);
   document.getElementById('val-y').textContent = displayPose.y.toFixed(3);
   document.getElementById('val-yaw').textContent = (displayPose.yaw * 180 / Math.PI).toFixed(1) + '\u00b0';
 
+  // Sensor connection in settings drawer
   const sensorDot = document.getElementById('sensor-dot');
   sensorDot.className = 'conn-dot ' + (s.sensor_connected ? 'on' : 'off');
-  const sItem = document.getElementById('sensor-item');
-  const valSensor = document.getElementById('val-sensor');
-  if (s.sensor_value != null) {
-    valSensor.textContent = s.sensor_value.toFixed(1);
-    const t = getThresholds();
-    sItem.className = 'data-item ' + (s.sensor_value < t.safe ? 'sensor-safe' : s.sensor_value < t.warn ? 'sensor-warn' : 'sensor-danger');
-  } else { valSensor.textContent = 'N/A'; sItem.className = 'data-item'; }
+  document.getElementById('sensor-conn-text').textContent = s.sensor_connected ? 'Connected' : 'Disconnected';
 
-  // Gantry visual bar
-  const gantryItem = document.getElementById('gantry-item');
-  const gantryVal = document.getElementById('val-gantry');
-  const gantryHomeBtn = document.getElementById('btn-gantry-home');
+  // Live reading in status banner
+  const liveReading = document.getElementById('status-live-reading');
+  if (s.sensor_value != null) {
+    liveReading.textContent = s.sensor_value.toFixed(1);
+    const t = getThresholds();
+    liveReading.className = 'status-live-reading ' + (s.sensor_value < t.safe ? 'reading-safe' : s.sensor_value < t.warn ? 'reading-warn' : 'reading-danger');
+  } else {
+    liveReading.textContent = '--';
+    liveReading.className = 'status-live-reading';
+  }
+
+  // Gantry in settings drawer
+  const settingsGantry = document.getElementById('settings-gantry');
   const gantryBarFill = document.getElementById('gantry-bar-fill');
+  const gantryVal = document.getElementById('val-gantry');
   const gantryDir = document.getElementById('gantry-dir');
+  const gantryHomeBtn = document.getElementById('btn-gantry-home');
   if (s.gantry) {
-    gantryItem.style.display = '';
-    gantryHomeBtn.style.display = '';
+    settingsGantry.style.display = '';
     const pos = s.gantry.current_position_mm || 0;
     const target = s.gantry.last_target_mm;
     const moving = s.gantry.moving;
-    const maxH = 1500; // approximate max for bar display
+    const maxH = 1500;
     const pct = Math.min(100, Math.max(0, (pos / maxH) * 100));
     gantryBarFill.style.height = pct + '%';
     gantryVal.textContent = pos.toFixed(0) + 'mm';
@@ -774,8 +836,7 @@ function updateUI(s) {
       gantryDir.style.color = 'var(--text-muted)';
     }
   } else {
-    gantryItem.style.display = 'none';
-    gantryHomeBtn.style.display = 'none';
+    settingsGantry.style.display = 'none';
   }
 
   const total = s.total_waypoints || 0;
@@ -784,11 +845,11 @@ function updateUI(s) {
   document.getElementById('progress-fill').style.width = pct + '%';
   const pt = document.getElementById('progress-text');
   if (s.nav_state === 'idle') pt.textContent = 'Waiting to start...';
-  else if (s.nav_state === 'done') pt.textContent = `Complete! ${done}/${total} waypoints.`;
+  else if (s.nav_state === 'done') pt.textContent = `Complete! ${done}/${total} points.`;
   else if (s.nav_state === 'error') pt.textContent = `Error: ${s.error}`;
-  else pt.textContent = `Waypoint ${s.current_waypoint + 1} / ${total} (${done} done)`;
+  else pt.textContent = `Point ${s.current_waypoint + 1} / ${total} (${done} done)`;
 
-  updateActivityBanner(s);
+  updateStatusBanner(s);
   updateStepPipeline(s);
   updateWaypointTable(s);
   if (mapCanvasReady) drawMap(s);
@@ -812,16 +873,16 @@ function updateUI(s) {
   }
 }
 
-// ---- Activity Banner + Step Pipeline ----
+// ---- Status Banner ----
 let collectStartTime = null;
 let lastBannerState = null;
-const MEASURE_DURATION = 5.0; // default, could be made dynamic
+const MEASURE_DURATION = 5.0;
 
-function updateActivityBanner(s) {
-  const banner = document.getElementById('activity-banner');
-  const icon = document.getElementById('activity-icon');
-  const title = document.getElementById('activity-title');
-  const detail = document.getElementById('activity-detail');
+function updateStatusBanner(s) {
+  const banner = document.getElementById('status-banner');
+  const icon = document.getElementById('status-icon');
+  const headline = document.getElementById('status-headline');
+  const subtext = document.getElementById('status-subtext');
   const wpNum = (s.current_waypoint || 0) + 1;
   const total = s.total_waypoints || 0;
 
@@ -841,26 +902,55 @@ function updateActivityBanner(s) {
   const gantryPos = s.gantry ? (s.gantry.current_position_mm || 0).toFixed(0) : '0';
   const gantryTarget = s.gantry && s.gantry.last_target_mm != null ? s.gantry.last_target_mm.toFixed(0) : '?';
 
+  // Determine done sub-state
+  let doneConfig;
+  if (s.nav_state === 'done') {
+    const t = getThresholds();
+    const logs = s.sensor_log || [];
+    let hasDanger = false, hasWarn = false, warnCount = 0;
+    for (const entry of logs) {
+      if (entry.sensor_value != null && entry.sensor_value !== '') {
+        const val = parseFloat(entry.sensor_value);
+        if (val >= t.warn) { hasDanger = true; }
+        else if (val >= t.safe) { hasWarn = true; warnCount++; }
+      }
+    }
+    // Count danger locations
+    let dangerCount = 0;
+    for (const entry of logs) {
+      if (entry.sensor_value != null && entry.sensor_value !== '') {
+        if (parseFloat(entry.sensor_value) >= t.warn) dangerCount++;
+      }
+    }
+    if (hasDanger) {
+      doneConfig = { icon:'\u26A0\uFE0F', headline:'ALERT \u2014 High readings detected', subtext:`${dangerCount} location(s) above danger threshold`, bg:'var(--danger-bg)', border:'var(--red)', pulse:true, pulseColor:'rgba(220,38,38,0.15)' };
+    } else if (hasWarn) {
+      doneConfig = { icon:'\u26A0\uFE0F', headline:'REVIEW NEEDED \u2014 Elevated readings at ' + warnCount + ' location(s)', subtext:'Some readings above safe threshold', bg:'var(--warn-bg)', border:'var(--yellow)', pulse:false, pulseColor:'' };
+    } else {
+      doneConfig = { icon:'\u2705', headline:'ALL CLEAR \u2014 No elevated readings', subtext:`All ${total} points within safe range`, bg:'var(--safe-bg)', border:'var(--green)', pulse:false, pulseColor:'' };
+    }
+  }
+
   const config = {
-    idle:            { icon:'\u23F8',  title:'Ready',                detail:'Click Start Patrol to begin',                              color:'#333',          pulse:false },
-    standing_up:     { icon:'\uD83D\uDC15', title:'Standing Up',    detail:'Preparing robot...',                                        color:'#854d0e',       pulse:true },
-    navigating:      { icon:'\u27A1\uFE0F', title:'Robot Moving',   detail:`Navigating to Waypoint ${wpNum} / ${total}`,                color:'#1e3a5f',       pulse:true },
-    collecting:      { icon:'\uD83D\uDCE1', title:'Measuring',      detail:'Collecting sensor data...',                                 color:'#5b21b6',       pulse:true },
-    collecting_low:  { icon:'\uD83D\uDCE1', title:'Measuring (Ground)', detail:`Sampling at 0mm \u2014 ${remaining}s remaining`,        color:'#854d0e',       pulse:true },
-    gantry_raising:  { icon:'\u2B06\uFE0F', title:'Gantry Rising',  detail:`Moving to ${gantryTarget}mm (now at ${gantryPos}mm)`,       color:'#5b21b6',       pulse:true },
-    collecting_high: { icon:'\uD83D\uDCE1', title:'Measuring (Elevated)', detail:`Sampling at ${gantryTarget}mm \u2014 ${remaining}s remaining`, color:'#9a3412', pulse:true },
-    waiting:         { icon:'\u270B',  title:'Waiting for Operator', detail:'Click "Next Point" to continue',                           color:'#9a3412',       pulse:false },
-    done:            { icon:'\u2705',  title:'Patrol Complete',      detail:`All ${total} waypoints done!`,                              color:'#166534',       pulse:false },
-    error:           { icon:'\u274C',  title:'Error',                detail:s.error || 'Unknown error',                                 color:'#7f1d1d',       pulse:false },
+    idle:            { icon:'\u23F8',  headline:'Ready to Begin',                subtext:'Press Start Patrol to begin radiation survey',         bg:'var(--bg-header)',  border:'var(--border)', pulse:false, pulseColor:'' },
+    standing_up:     { icon:'\uD83E\uDD16', headline:'Robot Preparing...',       subtext:'Standing up and initializing...',                      bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
+    navigating:      { icon:'\u27A1\uFE0F', headline:`Robot Moving to Point ${wpNum} of ${total}`, subtext:'Navigating to measurement location',  bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
+    collecting:      { icon:'\uD83D\uDCE1', headline:'Measuring Radiation...',   subtext:'Collecting sensor data...',                            bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
+    collecting_low:  { icon:'\uD83D\uDCE1', headline:'Measuring Radiation...',   subtext:`Ground level scan \u2014 ${remaining}s remaining`,     bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
+    gantry_raising:  { icon:'\u2B06\uFE0F', headline:'Raising Sensor Arm...',    subtext:`Moving to ${gantryTarget}mm (now at ${gantryPos}mm)`,  bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
+    collecting_high: { icon:'\uD83D\uDCE1', headline:'Measuring at Height...',   subtext:`Raised scan at ${gantryTarget}mm \u2014 ${remaining}s remaining`, bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
+    waiting:         { icon:'\u270B',  headline:'Waiting for You \u2014 Press Continue Patrol', subtext:'Robot stopped at measurement point',      bg:'#fff7ed',           border:'var(--orange)', pulse:false, pulseColor:'' },
+    done:            doneConfig || { icon:'\u2705', headline:'Patrol Complete', subtext:`All ${total} points done`, bg:'var(--safe-bg)', border:'var(--green)', pulse:false, pulseColor:'' },
+    error:           { icon:'\u274C',  headline:'ERROR \u2014 Robot stopped',    subtext:s.error || 'Unknown error',                             bg:'var(--danger-bg)',  border:'var(--red)', pulse:false, pulseColor:'' },
   };
 
   const c = config[s.nav_state] || config.idle;
   icon.textContent = c.icon;
-  title.textContent = c.title;
-  detail.textContent = c.detail;
-  banner.style.background = c.color;
-  banner.style.borderColor = c.color;
-  banner.style.setProperty('--pulse-color', c.color + '66');
+  headline.textContent = c.headline;
+  subtext.textContent = c.subtext;
+  banner.style.background = c.bg;
+  banner.style.borderBottom = '2px solid ' + c.border;
+  banner.style.setProperty('--pulse-color', c.pulseColor);
   banner.classList.toggle('pulse', c.pulse);
 }
 
@@ -946,9 +1036,9 @@ function updateWaypointTable(s) {
     for (let i = 0; i < waypoints.length; i++) {
       const wp = waypoints[i];
       if (is3DMode) {
-        html += `<tr class="wp-pending"><td>${i+1}</td><td>(${wp.x.toFixed(2)}, ${wp.y.toFixed(2)})</td><td>--</td><td>--</td><td></td><td>pending</td></tr>`;
+        html += `<tr class="wp-pending"><td>${i+1}</td><td class="col-position">(${wp.x.toFixed(2)}, ${wp.y.toFixed(2)})</td><td>--</td><td>--</td><td></td><td>pending</td></tr>`;
       } else {
-        html += `<tr class="wp-pending"><td>${i+1}</td><td>(${wp.x.toFixed(2)}, ${wp.y.toFixed(2)})</td><td>--</td><td>pending</td></tr>`;
+        html += `<tr class="wp-pending"><td>${i+1}</td><td class="col-position">(${wp.x.toFixed(2)}, ${wp.y.toFixed(2)})</td><td>--</td><td>pending</td></tr>`;
       }
     }
     tbody.innerHTML = html;
@@ -1003,7 +1093,7 @@ function updateWaypointTable(s) {
 
     html += `<tr class="wp-${r.status}${isMax ? ' wp-max-reading' : ''}">`;
     html += `<td>${r.i+1}</td>`;
-    html += `<td>(${r.wp.x.toFixed(2)}, ${r.wp.y.toFixed(2)})</td>`;
+    html += `<td class="col-position">(${r.wp.x.toFixed(2)}, ${r.wp.y.toFixed(2)})</td>`;
     if (is3DMode) {
       html += `<td class="${lowClass}">${lowStr}</td>`;
       html += `<td class="${highClass}">${highStr}</td>`;
@@ -1029,7 +1119,7 @@ function updateWaypointTable(s) {
     document.getElementById('sum-danger').textContent = dangerCount + ' Danger';
     const avg = allValues.reduce((a,b) => a+b, 0) / allValues.length;
     document.getElementById('sum-avg').textContent = avg.toFixed(0);
-    document.getElementById('sum-max').textContent = maxVal.toFixed(0) + ' (WP #' + maxWp + ')';
+    document.getElementById('sum-max').textContent = maxVal.toFixed(0) + ' (Point ' + maxWp + ')';
   } else {
     summary.style.display = 'none';
   }
@@ -1256,19 +1346,19 @@ function drawMap(s) {
   }
   if (!mapMeta) return;
 
-  // Route path
+  // Route path (darker blue for light theme)
   if (waypoints.length > 1) {
-    ctx.beginPath(); ctx.strokeStyle = 'rgba(79,140,255,0.4)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.strokeStyle = 'rgba(37,99,235,0.5)'; ctx.lineWidth = 2;
     waypoints.forEach((wp, i) => { const p = worldToCanvas(wp.x, wp.y, canvas); if (!p) return; i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y); });
     ctx.stroke();
   }
 
-  // Waypoint markers — enhanced with sensor readings on completed waypoints
+  // Waypoint markers
   const thresh = getThresholds();
   waypoints.forEach((wp, i) => {
     const p = worldToCanvas(wp.x, wp.y, canvas); if (!p) return;
     const status = (s.waypoint_statuses && s.waypoint_statuses[i]) || 'pending';
-    const statusColors = { pending:'#555', navigating:'#4f8cff', collecting:'#a855f7', collecting_low:'#eab308', gantry_raising:'#a855f7', collecting_high:'#f97316', waiting:'#f97316', done:'#22c55e' };
+    const statusColors = { pending:'#b0b0b0', navigating:'#2563eb', collecting:'#7c3aed', collecting_low:'#ca8a04', gantry_raising:'#7c3aed', collecting_high:'#ea580c', waiting:'#ea580c', done:'#16a34a' };
 
     // Get sensor readings for this waypoint
     const logs = s.sensor_log ? s.sensor_log.filter(e => e.waypoint === i + 1) : [];
@@ -1282,12 +1372,12 @@ function drawMap(s) {
 
     if (status === 'done' && primaryVal != null) {
       // Completed waypoint: draw threshold-colored marker with value
-      const sensorColor = primaryVal < thresh.safe ? 'var(--green)' : primaryVal < thresh.warn ? 'var(--yellow)' : 'var(--red)';
+      const sensorColor = primaryVal < thresh.safe ? '#16a34a' : primaryVal < thresh.warn ? '#ca8a04' : '#dc2626';
       const radius = Math.max(10, Math.min(18, 8 + (primaryVal / (thresh.warn || 600)) * 8));
 
       // Outer ring for high reading (if available)
       if (highVal != null) {
-        const highColor = highVal < thresh.safe ? '#22c55e' : highVal < thresh.warn ? '#eab308' : '#ef4444';
+        const highColor = highVal < thresh.safe ? '#16a34a' : highVal < thresh.warn ? '#ca8a04' : '#dc2626';
         ctx.beginPath(); ctx.arc(p.x, p.y, radius + 4, 0, 2*Math.PI);
         ctx.strokeStyle = highColor; ctx.lineWidth = 3; ctx.stroke();
       }
@@ -1301,22 +1391,22 @@ function drawMap(s) {
       ctx.fillStyle = '#fff'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(i + 1, p.x, p.y);
 
-      // Value label
+      // Value label (dark shadow for contrast on light bg)
       ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-      ctx.fillStyle = '#000'; ctx.fillText(primaryVal.toFixed(0), p.x + radius + 5 + 1, p.y + 1);
+      ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.fillText(primaryVal.toFixed(0), p.x + radius + 5 + 1, p.y + 1);
       ctx.fillStyle = sensorColor; ctx.fillText(primaryVal.toFixed(0), p.x + radius + 5, p.y);
 
       // Altitude arrow (if dual readings)
       if (highVal != null) {
         const arrow = highVal > primaryVal ? '\u2191' : highVal < primaryVal ? '\u2193' : '=';
         ctx.font = '10px sans-serif';
-        ctx.fillStyle = '#aaa';
+        ctx.fillStyle = '#555';
         ctx.fillText(arrow, p.x + radius + 5, p.y + 12);
       }
     } else {
       // Pending / in-progress: simple colored dot
       ctx.beginPath(); ctx.arc(p.x, p.y, 8, 0, 2*Math.PI);
-      ctx.fillStyle = statusColors[status] || '#555'; ctx.fill();
+      ctx.fillStyle = statusColors[status] || '#b0b0b0'; ctx.fill();
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
       ctx.fillStyle = '#fff'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(i + 1, p.x, p.y);
@@ -1329,8 +1419,8 @@ function drawMap(s) {
   if (rp) {
     ctx.save(); ctx.translate(rp.x, rp.y); ctx.rotate(-displayPose.yaw);
     ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(-7, -6); ctx.lineTo(-7, 6); ctx.closePath();
-    const rc = { idle:'#888', navigating:'#22c55e', collecting:'#eab308', collecting_low:'#eab308', gantry_raising:'#a855f7', collecting_high:'#f97316', waiting:'#f97316', done:'#22c55e', error:'#ef4444', standing_up:'#eab308' };
-    ctx.fillStyle = rc[s.nav_state] || '#22c55e'; ctx.fill();
+    const rc = { idle:'#888', navigating:'#16a34a', collecting:'#ca8a04', collecting_low:'#ca8a04', gantry_raising:'#7c3aed', collecting_high:'#ea580c', waiting:'#ea580c', done:'#16a34a', error:'#dc2626', standing_up:'#ca8a04' };
+    ctx.fillStyle = rc[s.nav_state] || '#16a34a'; ctx.fill();
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke(); ctx.restore();
   }
 }
@@ -1362,7 +1452,7 @@ async function check3DExists() {
     const d = await r.json();
     if (d.status === 'ready') { load3DIframe(); return; }
   } catch(e) {}
-  // Also try loading directly — file may exist from a previous session
+  // Also try loading directly
   try {
     const r2 = await fetch('/api/sensor_3d?phase=' + current3DPhase);
     if (r2.ok) load3DIframe();

@@ -254,13 +254,19 @@ Remove `--no-sensor` if an Arduino sensor is connected. Add `--loop` for continu
 
 ```bash
 # Navigation only (no sensor, no gantry — test robot movement):
-python sensor_monitor/auto_navigator.py --web --bridge 192.168.0.207 --no-sensor
+python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --no-sensor --no-gantry
+
+# Navigation + sensor, no gantry:
+python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --no-gantry
 
 # Navigation + gantry, no sensor (test gantry without Arduino):
 python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --no-sensor
 
-# Full system: sensor + gantry, 2D scan (default):
+# Full system: sensor + gantry, 2D scan (default, gantry-height=140mm):
 python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207
+
+# Full system with explicit gantry height (tested configuration):
+python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --gantry-height 140 --measure-duration 5
 
 # Full system: sensor + gantry, 3D scan (dual altitude):
 python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --measure-mode 3d
@@ -337,8 +343,18 @@ Place the robot at its starting mark, then:
 cd ~/Desktop/unitree_sdk2_python
 conda activate go2
 
+# Tested configuration (sensor + gantry at 140mm):
+python sensor_monitor/auto_navigator.py --web \
+    --jetson 192.168.0.207 \
+    --gantry-height 140 \
+    --measure-duration 5
+
+# Or use the short form (uses default gantry-height=140):
 python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207
 ```
+
+> `--jetson 192.168.0.207` is the Jetson's WiFi IP. It sets `--bridge`, `--sensor-host`,
+> and `--gantry-host` to the same IP in one flag.
 
 ### Browser
 
