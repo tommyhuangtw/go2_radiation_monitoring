@@ -48,7 +48,7 @@ class AutoNavigator:
                  save_history=True,
                  rotate_tolerance=0.05, move_tolerance=0.05,
                  gantry_host=None, gantry_port=8090,
-                 gantry_height=1500.0, measure_duration=5.0,
+                 gantry_height=9.0, measure_duration=5.0,
                  measure_mode="2d"):
         self._bridge_mode = bridge_host is not None
         self._bridge_client = None
@@ -88,6 +88,7 @@ class AutoNavigator:
         # Gantry control (optional — runs on Jetson, accessed via HTTP)
         self.gantry_client = None
         self.gantry_height = float(gantry_height)
+        self.gantry_display_cm = 40 + (self.gantry_height / 9.0) * 80  # motor mm → cm from ground
         self.measure_duration = float(measure_duration)
         self.measure_mode = measure_mode  # "2d" or "3d"
         if gantry_host:
@@ -490,20 +491,20 @@ class AutoNavigator:
         v_str = f"{avg:.1f} (std={std:.1f}, n={len(readings)})" if avg is not None else "N/A"
         print(f"    Logged [{phase}@{altitude_mm}mm]: pos=({x:.3f}, {y:.3f}), sensor={v_str}")
 
-    def _ensure_gantry_home(self, timeout=60.0):
+    def _ensure_gantry_home(self, timeout=30.0):
         """Block until gantry is at home position (0mm). Send move_to(0) if needed."""
         if not self.gantry_client:
             return
         if self.gantry_client.is_at_home():
             return
         # Gantry might still be lowering from previous waypoint — wait
-        print("    Waiting for gantry to reach home...")
+        print("    Waiting for sensor arm to reach home...")
         if not self.gantry_client.wait_for_arrival(timeout=timeout):
             # Still not at home — force it
-            print("    Gantry not at home, forcing move to 0mm...")
+            print("    Sensor arm not at home, forcing return...")
             self.gantry_client.move_to(0)
             if not self.gantry_client.wait_for_arrival(timeout=timeout):
-                raise RuntimeError("Gantry failed to reach home position")
+                raise RuntimeError("Sensor arm failed to reach home position")
 
     def save_sensor_data(self):
         """Save sensor log to CSV."""
@@ -661,22 +662,22 @@ class AutoNavigator:
                 try:
                     if self.gantry_client.is_reachable():
                         self.gantry_client.home_here()
-                        print("Gantry: auto-homed (current position = 0mm)")
+                        print("Sensor arm: auto-homed (home position)")
                         gantry_ok = True
                         break
                     else:
-                        print(f"  Gantry not reachable (attempt {attempt}/3)...")
+                        print(f"  Sensor arm not reachable (attempt {attempt}/3)...")
                 except Exception as e:
-                    print(f"  Gantry connection error (attempt {attempt}/3): {e}")
+                    print(f"  Sensor arm connection error (attempt {attempt}/3): {e}")
                 if attempt < 3:
                     time.sleep(2)
 
             if not gantry_ok:
                 print("\n" + "!" * 60)
-                print(f"  ERROR: Gantry at {self.gantry_client.base_url} not reachable!")
-                print(f"  Make sure on Jetson: python3 ~/gantry_control.py --web --port /dev/ttyUSB0")
+                print(f"  ERROR: Sensor arm at {self.gantry_client.base_url} not reachable!")
+                print(f"  Make sure on Jetson: python3 ~/gantry_control.py --web --port /dev/ttyACM0")
                 print("!" * 60)
-                print("Continuing WITHOUT gantry (single-altitude mode).\n")
+                print("Continuing WITHOUT sensor arm (single-altitude mode).\n")
                 self.gantry_client = None
 
         return True
@@ -710,18 +711,18 @@ class AutoNavigator:
                     if i == 0:
                         self.nav_state = "gantry_raising"
                         self.waypoint_statuses[i] = "gantry_raising"
-                        print(f"    Raising gantry to {self.gantry_height}mm...")
+                        print(f"    Raising sensor arm to {self.gantry_display_cm:.0f}cm...")
                         self.gantry_client.move_to(self.gantry_height)
-                        if not self.gantry_client.wait_for_arrival(timeout=120):
+                        if not self.gantry_client.wait_for_arrival(timeout=30):
                             state = self.gantry_client.get_state()
-                            raise RuntimeError(f"Gantry failed to reach {self.gantry_height}mm: {state.get('last_error', 'timeout')}")
+                            raise RuntimeError(f"Sensor arm failed to reach {self.gantry_display_cm:.0f}cm: {state.get('last_error', 'timeout')}")
                         if self._is_stopped():
                             break
 
                     # Measure at elevated height
                     self.nav_state = "collecting"
                     self.waypoint_statuses[i] = "collecting"
-                    print(f"    Collecting sensor data at {self.gantry_height}mm ({self.measure_duration}s)...")
+                    print(f"    Collecting sensor data at {self.gantry_display_cm:.0f}cm ({self.measure_duration}s)...")
                     self._collect_sensor_averaged(i + 1, duration=self.measure_duration,
                                                   altitude_mm=self.gantry_height, phase="elevated")
                     if self._is_stopped():
@@ -743,14 +744,14 @@ class AutoNavigator:
 
                     # Last waypoint: start lowering gantry (cleanup will wait)
                     if i == len(waypoints) - 1:
-                        print(f"    Lowering gantry to home...")
+                        print(f"    Lowering sensor arm to home...")
                         self.gantry_client.move_to(0)
 
                 elif self.gantry_client and self.measure_mode == "3d":
                     # --- 3D MODE: dual-altitude measurement cycle ---
 
                     # Ensure gantry is at home (may be lowering from previous waypoint)
-                    self._ensure_gantry_home(timeout=120)
+                    self._ensure_gantry_home(timeout=30)
                     if self._is_stopped():
                         break
 
@@ -766,11 +767,11 @@ class AutoNavigator:
                     # Raise gantry
                     self.nav_state = "gantry_raising"
                     self.waypoint_statuses[i] = "gantry_raising"
-                    print(f"    Raising gantry to {self.gantry_height}mm...")
+                    print(f"    Raising sensor arm to {self.gantry_display_cm:.0f}cm...")
                     self.gantry_client.move_to(self.gantry_height)
-                    if not self.gantry_client.wait_for_arrival(timeout=120):
+                    if not self.gantry_client.wait_for_arrival(timeout=30):
                         state = self.gantry_client.get_state()
-                        raise RuntimeError(f"Gantry failed to reach {self.gantry_height}mm: {state.get('last_error', 'timeout')}")
+                        raise RuntimeError(f"Sensor arm failed to reach {self.gantry_display_cm:.0f}cm: {state.get('last_error', 'timeout')}")
                     if self._is_stopped():
                         break
 
@@ -798,7 +799,7 @@ class AutoNavigator:
                                 break
 
                         # Start lowering gantry (async — runs in parallel with navigation)
-                        print(f"    Lowering gantry to home (parallel with navigation)...")
+                        print(f"    Lowering sensor arm to home (parallel with navigation)...")
                         self.gantry_client.move_to(0)
 
                 else:
@@ -842,14 +843,14 @@ class AutoNavigator:
             # Return gantry to home position before standing down
             if self.gantry_client:
                 try:
-                    print("Returning gantry to home...")
+                    print("Returning sensor arm to home...")
                     self.gantry_client.move_to(0)
-                    if self.gantry_client.wait_for_arrival(timeout=120):
-                        print("Gantry returned to home.")
+                    if self.gantry_client.wait_for_arrival(timeout=30):
+                        print("Sensor arm returned to home.")
                     else:
-                        print("WARNING: Gantry return home timed out.")
+                        print("WARNING: Sensor arm return home timed out.")
                 except Exception as e:
-                    print(f"WARNING: Gantry return home failed: {e}")
+                    print(f"WARNING: Sensor arm return home failed: {e}")
 
             print("Recovery stand...")
             self.sport_client.RecoveryStand()
@@ -999,8 +1000,8 @@ if __name__ == "__main__":
                         help="Gantry controller host (e.g. 192.168.0.207). Enables dual-altitude measurement.")
     parser.add_argument("--gantry-port", type=int, default=8090,
                         help="Gantry controller HTTP port (default: 8090)")
-    parser.add_argument("--gantry-height", type=float, default=140.0,
-                        help="Gantry raised height in mm (default: 140)")
+    parser.add_argument("--gantry-height", type=float, default=9.0,
+                        help="Gantry raised height in motor mm (default: 9, range: 0-9)")
     parser.add_argument("--measure-duration", type=float, default=5.0,
                         help="Sensor measurement duration in seconds (default: 5.0)")
     parser.add_argument("--measure-mode", choices=["2d", "3d"], default="2d",

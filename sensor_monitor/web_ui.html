@@ -823,16 +823,16 @@ function updateUI(s) {
     const pos = s.gantry.current_position_mm || 0;
     const target = s.gantry.last_target_mm;
     const moving = s.gantry.moving;
-    const maxH = 1500;
-    const pct = Math.min(100, Math.max(0, (pos / maxH) * 100));
+    const pct = Math.min(100, Math.max(0, (pos / 9) * 100));
+    const displayCm = 40 + (pos / 9) * 80;
     gantryBarFill.style.height = pct + '%';
-    gantryVal.textContent = pos.toFixed(0) + 'mm';
+    gantryVal.textContent = displayCm.toFixed(0) + 'cm';
     gantryVal.style.color = moving ? 'var(--yellow)' : 'var(--green)';
     if (moving && target != null) {
       gantryDir.textContent = target > pos ? '\u2191 Rising' : '\u2193 Lowering';
       gantryDir.style.color = 'var(--yellow)';
     } else {
-      gantryDir.textContent = pos < 2 ? 'Home' : 'Stopped';
+      gantryDir.textContent = pos < 0.5 ? 'Home' : 'Stopped';
       gantryDir.style.color = 'var(--text-muted)';
     }
   } else {
@@ -899,8 +899,8 @@ function updateStatusBanner(s) {
   let elapsed = collectStartTime ? (Date.now() - collectStartTime) / 1000 : 0;
   let remaining = Math.max(0, MEASURE_DURATION - elapsed).toFixed(1);
 
-  const gantryPos = s.gantry ? (s.gantry.current_position_mm || 0).toFixed(0) : '0';
-  const gantryTarget = s.gantry && s.gantry.last_target_mm != null ? s.gantry.last_target_mm.toFixed(0) : '?';
+  const gantryPos = s.gantry ? (40 + ((s.gantry.current_position_mm || 0) / 9) * 80).toFixed(0) : '40';
+  const gantryTarget = s.gantry && s.gantry.last_target_mm != null ? (40 + (s.gantry.last_target_mm / 9) * 80).toFixed(0) : '?';
 
   // Determine done sub-state
   let doneConfig;
@@ -937,8 +937,8 @@ function updateStatusBanner(s) {
     navigating:      { icon:'\u27A1\uFE0F', headline:`Robot Moving to Point ${wpNum} of ${total}`, subtext:'Navigating to measurement location',  bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
     collecting:      { icon:'\uD83D\uDCE1', headline:'Measuring Radiation...',   subtext:'Collecting sensor data...',                            bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
     collecting_low:  { icon:'\uD83D\uDCE1', headline:'Measuring Radiation...',   subtext:`Ground level scan \u2014 ${remaining}s remaining`,     bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
-    gantry_raising:  { icon:'\u2B06\uFE0F', headline:'Raising Sensor Arm...',    subtext:`Moving to ${gantryTarget}mm (now at ${gantryPos}mm)`,  bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
-    collecting_high: { icon:'\uD83D\uDCE1', headline:'Measuring at Height...',   subtext:`Raised scan at ${gantryTarget}mm \u2014 ${remaining}s remaining`, bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
+    gantry_raising:  { icon:'\u2B06\uFE0F', headline:'Raising Sensor Arm...',    subtext:`Moving to ${gantryTarget}cm (now at ${gantryPos}cm)`,  bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
+    collecting_high: { icon:'\uD83D\uDCE1', headline:'Measuring at Height...',   subtext:`Raised scan at ${gantryTarget}cm \u2014 ${remaining}s remaining`, bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
     waiting:         { icon:'\u270B',  headline:'Waiting for You \u2014 Press Continue Patrol', subtext:'Robot stopped at measurement point',      bg:'#fff7ed',           border:'var(--orange)', pulse:false, pulseColor:'' },
     done:            doneConfig || { icon:'\u2705', headline:'Patrol Complete', subtext:`All ${total} points done`, bg:'var(--safe-bg)', border:'var(--green)', pulse:false, pulseColor:'' },
     error:           { icon:'\u274C',  headline:'ERROR \u2014 Robot stopped',    subtext:s.error || 'Unknown error',                             bg:'var(--danger-bg)',  border:'var(--red)', pulse:false, pulseColor:'' },

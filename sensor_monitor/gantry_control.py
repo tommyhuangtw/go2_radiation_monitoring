@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
 """
-Gantry control for Jetson/Go2 payload using a TMC2209 over a USB-UART bridge.
+Gantry control for Jetson/Go2 payload via Arduino Mega + A4988 stepper driver.
 
 Design assumptions
 ------------------
-- Jetson talks to a CP2102/CP2102N USB-UART adapter as /dev/ttyUSB*.
-- The adapter talks to the TMC2209 UART pins.
-- Motor power (VM) is supplied separately from a suitable 12V rail.
-- Logic power (VIO) is 3.3V. Do not assume 5V logic is safe with a CP2102.
-- Motion is open-loop. Position is tracked in software only.
-
-This script uses the TMC2209 internal pulse generator (VACTUAL), so it can move a
-motor over UART without STEP/DIR pulses. That is useful for a simple Jetson-only
-prototype, but it is not a true closed-loop positioning system.
+- Jetson talks to an Arduino Mega over USB serial (/dev/ttyACM*).
+- The Arduino runs gantry_arduino_control.ino which handles STEP/DIR/EN
+  pulses for an A4988 stepper driver.
+- Motor power is supplied separately (12V rail).
+- Motion is open-loop. Position is tracked in software on the Arduino.
+- The Arduino accepts text commands (SET_HOME, MOVE_ABS, STOP, STATUS, etc.)
+  and returns text responses (OK ..., ERR ..., STATUS state=...).
 """
 
 from __future__ import annotations
@@ -20,7 +18,6 @@ from __future__ import annotations
 import argparse
 import glob
 import json
-import math
 import os
 import threading
 import time
@@ -31,49 +28,24 @@ import serial
 
 
 # ----------------------------
-# User-tunable gantry config
+# Arduino serial config
 # ----------------------------
-MOTOR_STEPS_PER_REV = 200.0          # NEMA17, 1.8 deg/step
-MICROSTEPS = 16                      # native driver microsteps configured in CHOPCONF
-LEADSCREW_MM_PER_REV = 8.0           # change if your screw/belt differs
-STEPS_PER_MM = (MOTOR_STEPS_PER_REV * MICROSTEPS) / LEADSCREW_MM_PER_REV
-
-# TMC2209 UART / motion config
 DEFAULT_BAUD = 115200
-DEFAULT_UART_ADDRESS = 0             # MS1=GND, MS2=GND
-DEFAULT_VACTUAL = 18000              # conservative default for prototype use
-DEFAULT_REPLY_TIMEOUT = 0.08
-DEFAULT_SEND_DELAY = 0.005
-VACTUAL_TO_USTEPS_PER_SEC = 12_000_000 / (2 ** 24)  # 0.715255...
-VACTUAL_MAX = (2 ** 23) - 1
+SERIAL_TIMEOUT = 0.1           # readline timeout (seconds)
+ARDUINO_BOOT_WAIT = 2.5        # wait for Arduino reset after serial open
+STATUS_POLL_INTERVAL = 0.05    # poll interval during move_to
 
-# TMC2209 registers used here
-REG_GCONF = 0x00
-REG_IFCNT = 0x02
-REG_IHOLD_IRUN = 0x10
-REG_TPOWERDOWN = 0x11
-REG_VACTUAL = 0x22
-REG_CHOPCONF = 0x6C
-REG_DRV_STATUS = 0x6F
-
-# Minimal config values
-BIT_PDN_DISABLE = 6
-BIT_MSTEP_REG_SELECT = 7
-BIT_INTPOL = 28
-# MRES code in CHOPCONF[27:24]: 0=256,1=128,2=64,3=32,4=16,5=8,6=4,7=2,8=fullstep
-MRES_CODE_BY_MICROSTEPS = {256: 0, 128: 1, 64: 2, 32: 3, 16: 4, 8: 5, 4: 6, 2: 7, 1: 8}
-DEFAULT_CHOPCONF_BASE = 0x00000053   # TOFF non-zero so the driver is enabled
-DEFAULT_IRUN = 20                    # 0..31 current scale (still depends on VREF / board)
-DEFAULT_IHOLD = 8
-DEFAULT_IHOLDDELAY = 6
-DEFAULT_TPOWERDOWN = 20
+# Physical height mapping (motor mm → cm from ground)
+GROUND_HEIGHT_CM = 40.0    # height when motor at 0mm (home)
+TOP_HEIGHT_CM = 120.0      # height when motor at 9mm (top)
+MOTOR_RANGE_MM = 9.0       # motor travel range
 
 
 @dataclass
 class GantryState:
     connected: bool = False
     serial_port: Optional[str] = None
-    uart_address: int = DEFAULT_UART_ADDRESS
+    uart_address: int = 0
     current_position_mm: float = 0.0
     last_target_mm: Optional[float] = None
     moving: bool = False
@@ -85,113 +57,101 @@ class GantryState:
     motor_enabled: bool = False
 
 
-class TMC2209UART:
-    """Very small TMC2209 UART helper using the datasheet datagram format."""
+class ArduinoSerial:
+    """Serial interface to the Arduino gantry controller."""
 
-    def __init__(
-        self,
-        port: str,
-        baudrate: int = DEFAULT_BAUD,
-        address: int = DEFAULT_UART_ADDRESS,
-        timeout: float = DEFAULT_REPLY_TIMEOUT,
-    ) -> None:
+    def __init__(self, port: str, baudrate: int = DEFAULT_BAUD) -> None:
         self.port = port
         self.baudrate = baudrate
-        self.address = address & 0xFF
-        self.timeout = timeout
-        self._ser = serial.Serial(port=port, baudrate=baudrate, timeout=timeout)
+        self._ser = serial.Serial(port=port, baudrate=baudrate, timeout=SERIAL_TIMEOUT)
         self._io_lock = threading.Lock()
 
-    @staticmethod
-    def _crc(datagram: bytes) -> int:
-        crc = 0
-        for byte in datagram:
-            current = byte
-            for _ in range(8):
-                if ((crc >> 7) ^ (current & 0x01)):
-                    crc = ((crc << 1) ^ 0x07) & 0xFF
-                else:
-                    crc = (crc << 1) & 0xFF
-                current >>= 1
-        return crc
+    def wait_for_boot(self, timeout: float = ARDUINO_BOOT_WAIT) -> list[str]:
+        """Drain boot messages, waiting for A4988_GANTRY_READY."""
+        lines: list[str] = []
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            line = self._ser.readline().decode("utf-8", errors="replace").strip()
+            if line:
+                lines.append(line)
+                if "A4988_GANTRY_READY" in line:
+                    # Keep draining briefly for any remaining boot lines
+                    time.sleep(0.1)
+                    while self._ser.in_waiting:
+                        extra = self._ser.readline().decode("utf-8", errors="replace").strip()
+                        if extra:
+                            lines.append(extra)
+                    return lines
+        return lines
+
+    def send_command(self, cmd: str) -> list[str]:
+        """Send a command and collect response lines until OK/ERR or timeout."""
+        with self._io_lock:
+            # Drain any stale data
+            self._ser.reset_input_buffer()
+            self._ser.write((cmd + "\n").encode("utf-8"))
+            self._ser.flush()
+
+            lines: list[str] = []
+            deadline = time.time() + 1.0  # timeout for response
+            while time.time() < deadline:
+                line = self._ser.readline().decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+                lines.append(line)
+                # Terminal responses: OK, ERR, or TARGET LOCATION ARRIVED
+                if line.startswith("OK ") or line.startswith("ERR ") or line.startswith("TARGET "):
+                    # Also grab any trailing STATUS line
+                    time.sleep(0.005)
+                    while self._ser.in_waiting:
+                        extra = self._ser.readline().decode("utf-8", errors="replace").strip()
+                        if extra:
+                            lines.append(extra)
+                    break
+            return lines
+
+    def send_and_check(self, cmd: str) -> list[str]:
+        """Send command, raise RuntimeError on ERR response."""
+        lines = self.send_command(cmd)
+        for line in lines:
+            if line.startswith("ERR "):
+                raise RuntimeError(line[4:])
+        return lines
 
     @staticmethod
-    def _u32_to_bytes(value: int) -> bytes:
-        return int(value & 0xFFFFFFFF).to_bytes(4, byteorder="big", signed=False)
+    def parse_status_line(line: str) -> dict:
+        """Parse 'STATUS state=X pos_mm=Y target_mm=Z home=H enabled=E' into dict."""
+        # Remove 'STATUS ' prefix
+        body = line[7:] if line.startswith("STATUS ") else line
+        result = {}
+        for part in body.split():
+            key, _, val = part.partition("=")
+            if key:
+                result[key] = val
+        return {
+            "state": result.get("state", "UNKNOWN"),
+            "pos_mm": float(result.get("pos_mm", "0")),
+            "target_mm": float(result.get("target_mm", "0")),
+            "home": result.get("home", "0") == "1",
+            "enabled": result.get("enabled", "0") == "1",
+        }
 
-    @staticmethod
-    def _bytes_to_u32(data: bytes) -> int:
-        return int.from_bytes(data, byteorder="big", signed=False)
+    def get_status(self) -> dict:
+        """Send STATUS and return parsed result."""
+        lines = self.send_command("STATUS")
+        for line in lines:
+            if line.startswith("STATUS "):
+                return self.parse_status_line(line)
+        raise RuntimeError(f"No STATUS reply from Arduino: {lines}")
 
-    @staticmethod
-    def _to_signed_24(value: int) -> int:
-        value &= 0xFFFFFF
-        if value & 0x800000:
-            return value - (1 << 24)
-        return value
-
-    @staticmethod
-    def _from_signed_24(value: int) -> int:
-        if value < 0:
-            value = (1 << 24) + value
-        return value & 0xFFFFFF
+    def ping(self) -> bool:
+        """Send PING and check for PONG."""
+        lines = self.send_command("PING")
+        return any("PONG" in line for line in lines)
 
     def close(self) -> None:
         if self._ser and self._ser.is_open:
             self._ser.close()
-
-    def write_register(self, reg: int, value: int) -> None:
-        payload = bytes([0x05, self.address, (reg & 0x7F) | 0x80]) + self._u32_to_bytes(value)
-        frame = payload + bytes([self._crc(payload)])
-        with self._io_lock:
-            self._ser.reset_input_buffer()
-            self._ser.write(frame)
-            self._ser.flush()
-            time.sleep(DEFAULT_SEND_DELAY)
-            # read and discard possible echo bytes from the single-wire arrangement
-            _ = self._ser.read(len(frame))
-
-    def read_register(self, reg: int) -> int:
-        payload = bytes([0x05, self.address, reg & 0x7F])
-        frame = payload + bytes([self._crc(payload)])
-        with self._io_lock:
-            self._ser.reset_input_buffer()
-            self._ser.write(frame)
-            self._ser.flush()
-            time.sleep(DEFAULT_SEND_DELAY)
-            raw = self._ser.read(32)
-
-        if not raw:
-            raise RuntimeError("No UART reply from TMC2209")
-
-        # Remove echoed request if present.
-        if raw.startswith(frame):
-            raw = raw[len(frame):]
-
-        # Search for an 8-byte reply frame: [0x05, 0xFF, reg, d3, d2, d1, d0, crc]
-        for i in range(max(0, len(raw) - 7)):
-            candidate = raw[i:i + 8]
-            if len(candidate) < 8:
-                continue
-            if candidate[0] != 0x05:
-                continue
-            if candidate[1] != 0xFF:
-                continue
-            if (candidate[2] & 0x7F) != (reg & 0x7F):
-                continue
-            if self._crc(candidate[:-1]) != candidate[-1]:
-                continue
-            return self._bytes_to_u32(candidate[3:7])
-
-        raise RuntimeError(f"Invalid UART reply for reg 0x{reg:02X}: {raw.hex(' ')}")
-
-    def set_vactual(self, value: int) -> None:
-        value = max(-VACTUAL_MAX, min(VACTUAL_MAX, int(value)))
-        reg_value = self._from_signed_24(value)
-        self.write_register(REG_VACTUAL, reg_value)
-
-    def get_ifcnt(self) -> int:
-        return self.read_register(REG_IFCNT) & 0xFF
 
 
 class GantryController:
@@ -199,94 +159,119 @@ class GantryController:
         self,
         port: Optional[str] = None,
         baudrate: int = DEFAULT_BAUD,
-        uart_address: int = DEFAULT_UART_ADDRESS,
-        steps_per_mm: float = STEPS_PER_MM,
-        default_vactual: int = DEFAULT_VACTUAL,
     ) -> None:
-        self.steps_per_mm = steps_per_mm
-        self.default_vactual = int(default_vactual)
         self.port = port or self._auto_detect_port()
         self.baudrate = baudrate
-        self.uart_address = uart_address
-        self.driver: Optional[TMC2209UART] = None
-        self.state = GantryState(serial_port=self.port, uart_address=uart_address)
+        self.arduino: Optional[ArduinoSerial] = None
+        self.state = GantryState(serial_port=self.port)
         self._move_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
     @staticmethod
-    def _auto_detect_port() -> Optional[str]:
-        ports = sorted(glob.glob("/dev/ttyUSB*"))
-        return ports[0] if ports else None
+    def _list_candidate_ports() -> list[str]:
+        """List all candidate serial ports (ttyACM* first, then ttyUSB*)."""
+        ports = sorted(glob.glob("/dev/ttyACM*")) + sorted(glob.glob("/dev/ttyUSB*"))
+        return ports
+
+    def _try_connect_port(self, port: str) -> bool:
+        """Try to connect to a port and verify it's the gantry Arduino.
+        Returns True if this port has the gantry controller."""
+        try:
+            arduino = ArduinoSerial(port, self.baudrate)
+            boot_lines = arduino.wait_for_boot()
+            # Check if boot messages identify this as the gantry controller
+            is_gantry = any("A4988_GANTRY_READY" in line for line in boot_lines)
+            if not is_gantry:
+                # Might have missed boot message — try PING
+                if arduino.ping():
+                    # Verify it responds to STATUS (gantry-specific command)
+                    try:
+                        status = arduino.get_status()
+                        is_gantry = "state" in status
+                    except Exception:
+                        is_gantry = False
+            if is_gantry:
+                self.arduino = arduino
+                self.port = port
+                return True
+            else:
+                arduino.close()
+                return False
+        except (serial.SerialException, OSError):
+            return False
 
     def connect(self) -> None:
-        if not self.port:
-            raise RuntimeError("No /dev/ttyUSB* port found for the CP2102/USB-UART adapter")
-        self.driver = TMC2209UART(self.port, self.baudrate, self.uart_address)
-        self._basic_init()
+        if self.port:
+            # Specific port requested — use it directly
+            self.arduino = ArduinoSerial(self.port, self.baudrate)
+            boot_lines = self.arduino.wait_for_boot()
+            if not self.arduino.ping():
+                raise RuntimeError(f"Arduino not responding on {self.port}")
+        else:
+            # Auto-detect: try each port until we find the gantry Arduino
+            candidates = self._list_candidate_ports()
+            if not candidates:
+                raise RuntimeError("No Arduino serial port found (/dev/ttyACM* or /dev/ttyUSB*)")
+            for port in candidates:
+                print(f"Trying {port}...")
+                if self._try_connect_port(port):
+                    print(f"Found gantry Arduino on {port}")
+                    break
+            else:
+                raise RuntimeError(
+                    f"Gantry Arduino not found on any port: {candidates}. "
+                    f"Use --port to specify manually."
+                )
+        self._sync_state()
         self.state.connected = True
         self.state.serial_port = self.port
-        self.state.status = "ready"
+        # Auto-home: assume gantry starts at physical bottom (0mm)
+        self.set_home_here()
 
     def close(self) -> None:
         try:
             self.stop()
         finally:
-            if self.driver is not None:
-                self.driver.close()
+            if self.arduino is not None:
+                self.arduino.close()
 
-    def _basic_init(self) -> None:
-        if self.driver is None:
-            raise RuntimeError("Driver not connected")
-
-        # 1) Enable UART mode and select register-controlled microstep resolution.
-        gconf = (1 << BIT_PDN_DISABLE) | (1 << BIT_MSTEP_REG_SELECT)
-        self.driver.write_register(REG_GCONF, gconf)
-
-        # 2) Set run/hold current scales. These are driver scale values, not absolute amps.
-        ihold_irun = (
-            (DEFAULT_IHOLD & 0x1F)
-            | ((DEFAULT_IRUN & 0x1F) << 8)
-            | ((DEFAULT_IHOLDDELAY & 0x0F) << 16)
-        )
-        self.driver.write_register(REG_IHOLD_IRUN, ihold_irun)
-        self.driver.write_register(REG_TPOWERDOWN, DEFAULT_TPOWERDOWN)
-
-        # 3) Set microstep resolution and interpolation; keep TOFF non-zero so the bridge is enabled.
-        mres_code = MRES_CODE_BY_MICROSTEPS.get(int(MICROSTEPS))
-        if mres_code is None:
-            raise RuntimeError(f"Unsupported MICROSTEPS value: {MICROSTEPS}")
-        chopconf = DEFAULT_CHOPCONF_BASE | (1 << BIT_INTPOL) | (mres_code << 24)
-        self.driver.write_register(REG_CHOPCONF, chopconf)
-
-        # 4) Stop motion.
-        self.driver.set_vactual(0)
-        self.state.motor_enabled = True
-
-        # 5) Communication sanity check.
-        self.state.ifcnt = self.driver.get_ifcnt()
-
-    def mm_to_microsteps(self, mm: float) -> float:
-        return mm * self.steps_per_mm
-
-    def microsteps_to_mm(self, microsteps: float) -> float:
-        return microsteps / self.steps_per_mm
-
-    def _vactual_to_microsteps_per_sec(self, vactual: int) -> float:
-        return abs(vactual) * VACTUAL_TO_USTEPS_PER_SEC
+    def _sync_state(self) -> None:
+        """Pull current state from Arduino and update GantryState."""
+        if self.arduino is None:
+            return
+        try:
+            status = self.arduino.get_status()
+            self.state.current_position_mm = status["pos_mm"]
+            self.state.last_target_mm = status["target_mm"]
+            self.state.moving = (status["state"] == "MOVING")
+            self.state.homed = status["home"]
+            self.state.motor_enabled = status["enabled"]
+            state_map = {
+                "IDLE": "idle",
+                "MOVING": "moving",
+                "STOPPED": "stopped",
+                "ERROR": "error",
+            }
+            self.state.status = state_map.get(status["state"], status["state"].lower())
+        except Exception as exc:
+            self.state.last_error = str(exc)
 
     def set_home_here(self) -> None:
-        self.state.current_position_mm = 0.0
+        if self.arduino is None:
+            raise RuntimeError("Arduino not connected")
+        self.arduino.send_and_check("SET_HOME")
+        self._sync_state()
         self.state.homed = True
         self.state.status = "homed"
         self.state.last_error = ""
 
     def stop(self) -> None:
         self._stop_event.set()
-        if self.driver is not None:
+        if self.arduino is not None:
             try:
-                self.driver.set_vactual(0)
-                self.state.vactual = 0
+                self.arduino.send_command("STOP")
+                self._sync_state()
             except Exception:
                 pass
         self.state.moving = False
@@ -300,101 +285,68 @@ class GantryController:
         self._thread.start()
 
     def move_to(self, target_mm: float) -> None:
-        if self.driver is None:
-            raise RuntimeError("Driver not connected")
+        if self.arduino is None:
+            raise RuntimeError("Arduino not connected")
 
         with self._move_lock:
             self._stop_event.clear()
-            start_mm = self.state.current_position_mm
-            delta_mm = float(target_mm) - start_mm
-            if abs(delta_mm) < (1.0 / self.steps_per_mm):
-                self.state.last_target_mm = float(target_mm)
-                self.state.status = "at_target"
-                return
-
-            direction = 1 if delta_mm > 0 else -1
-            total_usteps = abs(self.mm_to_microsteps(delta_mm))
-            target_v = max(1000, min(VACTUAL_MAX, abs(self.default_vactual)))
-            target_usteps_s = self._vactual_to_microsteps_per_sec(target_v)
-            if target_usteps_s <= 0:
-                raise RuntimeError("Invalid VACTUAL; computed speed is zero")
-
-            # TMC2209 VACTUAL has no ramp generator. Use a small software ramp to reduce missed steps.
-            ramp_time = 0.25
-            ramp_steps = 5
-            ramp_distance = 0.5 * target_usteps_s * ramp_time  # per ramp
-            cruise_distance = max(0.0, total_usteps - 2 * ramp_distance)
-            cruise_time = cruise_distance / target_usteps_s if cruise_distance > 0 else 0.0
-
             self.state.moving = True
             self.state.status = "moving"
             self.state.last_target_mm = float(target_mm)
             self.state.last_error = ""
 
             try:
-                # Ramp up
-                for i in range(1, ramp_steps + 1):
-                    if self._stop_event.is_set():
-                        break
-                    v = int(direction * target_v * (i / ramp_steps))
-                    self.driver.set_vactual(v)
-                    self.state.vactual = v
-                    time.sleep(ramp_time / ramp_steps)
+                lines = self.arduino.send_and_check(f"MOVE_ABS {target_mm:.2f}")
 
-                # Cruise
-                if not self._stop_event.is_set() and cruise_time > 0:
-                    self.driver.set_vactual(direction * target_v)
-                    self.state.vactual = direction * target_v
-                    t0 = time.time()
-                    while time.time() - t0 < cruise_time:
-                        if self._stop_event.is_set():
-                            break
-                        time.sleep(0.01)
-
-                # Ramp down
-                if not self._stop_event.is_set():
-                    for i in range(ramp_steps - 1, -1, -1):
-                        v = int(direction * target_v * (i / ramp_steps)) if i > 0 else 0
-                        self.driver.set_vactual(v)
-                        self.state.vactual = v
-                        time.sleep(ramp_time / ramp_steps)
-                else:
-                    self.driver.set_vactual(0)
-                    self.state.vactual = 0
-
-                if self._stop_event.is_set():
-                    self.state.status = "stopped"
-                else:
-                    self.state.current_position_mm = float(target_mm)
+                # Check if already at target
+                already_arrived = any(
+                    "ARRIVED" in line for line in lines
+                    if line.startswith("OK ") or line.startswith("TARGET ")
+                )
+                if already_arrived:
+                    self._sync_state()
                     self.state.status = "at_target"
+                    return
 
-                # Read IFCNT after a motion command sequence as a basic UART health check.
-                self.state.ifcnt = self.driver.get_ifcnt()
+                # Poll until Arduino finishes moving
+                while True:
+                    if self._stop_event.is_set():
+                        self.arduino.send_command("STOP")
+                        self._sync_state()
+                        self.state.status = "stopped"
+                        return
+
+                    time.sleep(STATUS_POLL_INTERVAL)
+                    status = self.arduino.get_status()
+                    self.state.current_position_mm = status["pos_mm"]
+
+                    if status["state"] == "IDLE":
+                        self._sync_state()
+                        self.state.status = "at_target"
+                        return
+                    elif status["state"] == "STOPPED":
+                        self._sync_state()
+                        self.state.status = "stopped"
+                        return
+                    elif status["state"] == "ERROR":
+                        self._sync_state()
+                        self.state.status = "error"
+                        return
 
             except Exception as exc:
                 self.state.last_error = str(exc)
                 self.state.status = "error"
-                try:
-                    self.driver.set_vactual(0)
-                    self.state.vactual = 0
-                except Exception:
-                    pass
                 raise
             finally:
                 self.state.moving = False
-                try:
-                    self.driver.set_vactual(0)
-                    self.state.vactual = 0
-                except Exception:
-                    pass
 
     def jog(self, delta_mm: float) -> None:
         self.move_to_async(self.state.current_position_mm + float(delta_mm))
 
-    def read_driver_status(self) -> Optional[int]:
-        if self.driver is None:
-            return None
-        return self.driver.read_register(REG_DRV_STATUS)
+    @staticmethod
+    def motor_to_display_cm(motor_mm: float) -> float:
+        """Convert internal motor mm to user-visible height in cm from ground."""
+        return GROUND_HEIGHT_CM + (motor_mm / MOTOR_RANGE_MM) * (TOP_HEIGHT_CM - GROUND_HEIGHT_CM)
 
     def get_state_dict(self) -> dict:
         return asdict(self.state)
@@ -426,7 +378,7 @@ pre { white-space:pre-wrap; background:#0b1220; padding:12px; border-radius:10px
 <body>
 <div class=\"wrap\">
   <h1>Go2 Gantry Control</h1>
-  <p class=\"small\">Open-loop TMC2209 UART control over CP2102 on the Jetson.</p>
+  <p class=\"small\">Arduino Mega + A4988 gantry control over USB serial.</p>
   <div class=\"grid\">
     <div class=\"card\">
       <h3>Move to absolute position (mm)</h3>
@@ -451,11 +403,11 @@ pre { white-space:pre-wrap; background:#0b1220; padding:12px; border-radius:10px
   </div>
   <div class=\"card\" style=\"margin-top:16px\">
     <h3>Notes</h3>
-    <pre>1) Put the carriage at your real mechanical zero.
-2) Press \"Set Home Here\" once.
-3) Use absolute mm moves.
-4) This system does not remember position after power-off unless the carriage stays exactly where it was.
-5) Add a real limit switch later for repeatable startup homing.</pre>
+    <pre>1) Home is set automatically when this server starts (assumes sensor arm is at bottom).
+2) Sensor arm range: 40 cm (home/bottom) to 120 cm (top) from ground.
+3) Use absolute mm moves (internal) or jog buttons.
+4) Position resets on Arduino power-off. Restart this server to re-home.
+5) If arm is NOT at bottom on startup, manually press \"Set Home Here\" first.</pre>
   </div>
 </div>
 <script>
@@ -467,17 +419,19 @@ async function api(path, method='GET', body=null) {
   });
   return await res.json();
 }
+function toDisplayCm(mm) { return 40 + (Number(mm) / 9) * 80; }
 async function refresh() {
   const s = await api('/api/state');
+  const heightCm = toDisplayCm(s.current_position_mm);
+  const targetCm = s.last_target_mm === null ? null : toDisplayCm(s.last_target_mm);
   document.getElementById('status').innerHTML = `
     <b>Connected:</b> ${s.connected}<br>
-    <b>Port:</b> ${s.serial_port || 'N/A'}<br>
-    <b>Position:</b> ${Number(s.current_position_mm).toFixed(3)} mm<br>
-    <b>Target:</b> ${s.last_target_mm === null ? 'N/A' : Number(s.last_target_mm).toFixed(3) + ' mm'}<br>
+    <b>Height:</b> ${heightCm.toFixed(0)} cm<br>
+    <b>Target:</b> ${targetCm === null ? 'N/A' : targetCm.toFixed(0) + ' cm'}<br>
     <b>Status:</b> ${s.status}<br>
     <b>Moving:</b> ${s.moving}<br>
     <b>Homed:</b> ${s.homed}<br>
-    <b>IFCNT:</b> ${s.ifcnt === null ? 'N/A' : s.ifcnt}<br>
+    <b>Motor enabled:</b> ${s.motor_enabled}<br>
     <b>Last error:</b> ${s.last_error || 'None'}`;
 }
 async function moveTo() {
@@ -554,26 +508,26 @@ def run_web_server(controller: GantryController, host: str = "0.0.0.0", port: in
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Jetson TMC2209 gantry controller")
-    parser.add_argument("--port", default=None, help="CP2102 serial port, e.g. /dev/ttyUSB0")
+    parser = argparse.ArgumentParser(description="Jetson Arduino gantry controller")
+    parser.add_argument("--port", default=None, help="Arduino serial port, e.g. /dev/ttyACM0")
     parser.add_argument("--baud", type=int, default=DEFAULT_BAUD)
-    parser.add_argument("--address", type=int, default=DEFAULT_UART_ADDRESS)
     parser.add_argument("--web", action="store_true", help="Run the browser UI server")
     parser.add_argument("--web-port", type=int, default=8090)
     args = parser.parse_args()
 
-    controller = GantryController(port=args.port, baudrate=args.baud, uart_address=args.address)
+    controller = GantryController(port=args.port, baudrate=args.baud)
     controller.connect()
 
     if args.web:
         run_web_server(controller, port=args.web_port)
         return
 
-    print("Connected to TMC2209 on", controller.port)
+    print("Connected to Arduino on", controller.port)
     print("Commands: home, stop, state, <mm target>, q")
     try:
         while True:
-            cmd = input(f"gantry[{controller.state.current_position_mm:.3f} mm]> ").strip().lower()
+            height_cm = controller.motor_to_display_cm(controller.state.current_position_mm)
+            cmd = input(f"gantry[{height_cm:.0f} cm]> ").strip().lower()
             if cmd in {"q", "quit", "exit"}:
                 break
             if cmd == "home":
