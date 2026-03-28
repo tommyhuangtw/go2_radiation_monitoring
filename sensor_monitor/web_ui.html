@@ -236,8 +236,8 @@
 
   /* Heatmap */
   #heatmap-section { display: none; }
-  #heatmap-container { position: relative; width: 100%; background: #f0f0f0; border-radius: 8px; overflow: hidden; }
-  #heatmap-img { display: block; width: 100%; height: auto; opacity: 0; transition: opacity 0.3s; }
+  #heatmap-container { position: relative; width: 100%; max-height: 70vh; background: #f0f0f0; border-radius: 8px; overflow: hidden; }
+  #heatmap-img { display: block; width: 100%; height: auto; max-height: 70vh; object-fit: contain; opacity: 0; transition: opacity 0.3s; }
   #heatmap-img.loaded { opacity: 1; }
   #heatmap-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
   .legend-bar {
@@ -439,9 +439,24 @@
       </div>
       <div class="wp-table-wrap">
         <table>
-          <thead><tr><th>Point</th><th class="col-position">Position</th><th id="th-low">Ground Level</th><th id="th-high">Raised Level</th><th id="th-delta">Delta</th><th id="th-value" style="display:none;">Radiation Level</th><th>Status</th></tr></thead>
+          <thead><tr><th>Point</th><th class="col-position">Position</th><th id="th-low">Mid Level</th><th id="th-high">Top Level</th><th id="th-delta">Delta</th><th id="th-value" style="display:none;">Radiation Level</th><th>Status</th></tr></thead>
           <tbody id="wp-tbody"></tbody>
         </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Inline Post-Patrol Results (shown on main tab after patrol completes) -->
+  <div class="panel full-width" id="inline-results" style="display:none;">
+    <div class="panel-header">Visualization Results</div>
+    <div class="panel-body" style="text-align:center; padding:16px;">
+      <img id="inline-heatmap" style="max-height:50vh; max-width:100%; object-fit:contain; border-radius:8px; display:none;" />
+      <div id="inline-3d-status" style="margin-top:16px; padding:12px; background:var(--bg-header); border-radius:8px;">
+        <span id="inline-3d-text" style="font-size:0.95em;">Generating 3D map...</span>
+        <a id="inline-3d-link" href="#" target="_blank" class="btn btn-3d"
+           style="display:none; margin-left:12px; padding:8px 20px; text-decoration:none;">
+          Open 3D Map in New Tab
+        </a>
       </div>
     </div>
   </div>
@@ -468,13 +483,22 @@
         <button class="btn btn-3d" id="btn-gen3d" onclick="generate3D()">Build 3D Map</button>
       </div>
     </div>
-    <div id="panel-3d-body">
+    <div id="panel-3d-body" style="padding:20px;">
       <div id="iframe-placeholder">
         <div class="spinner" id="gen-spinner" style="display:none;"></div>
-        <div id="placeholder-text">Click "Build 3D Map" to create an interactive visualization</div>
+        <div id="placeholder-text">Click "Build 3D Map" to generate the visualization</div>
         <div class="hint">Requires sensor_data.csv from a completed patrol</div>
       </div>
-      <iframe id="sensor-3d-iframe" loading="lazy"></iframe>
+      <div id="3d-link-container" style="display:none; text-align:center; padding:20px;">
+        <p style="margin-bottom:12px;">3D visualization generated successfully.</p>
+        <a id="3d-open-link" href="/home/tommy/Desktop/unitree_sdk2_python/sensor_monitor/data/sensor_3d_interactive.html" target="_blank"
+           class="btn btn-3d" style="display:inline-block; padding:12px 28px; font-size:1.1em; text-decoration:none;">
+          Open 3D Map in New Tab
+        </a>
+        <p style="margin-top:12px; opacity:0.6; font-size:0.85em;">
+          File: <code>/sensor_monitor/data/sensor_3d_interactive.html</code>
+        </p>
+      </div>
     </div>
   </div>
 </div>
@@ -529,8 +553,8 @@
   <div class="settings-section">
     <div class="settings-label">Scan Mode</div>
     <select id="measure-mode">
-      <option value="2d" selected>Standard Scan</option>
-      <option value="3d">Detailed Scan (two heights)</option>
+      <option value="2d">Standard Scan</option>
+      <option value="3d" selected>Detailed Scan (two heights)</option>
     </select>
   </div>
   <!-- Alert Thresholds -->
@@ -742,6 +766,8 @@ function startPatrol() {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({cmd: 'start', mode}));
   }
+  // Hide inline results from previous patrol
+  document.getElementById('inline-results').style.display = 'none';
 }
 
 // ---- UI Update ----
@@ -758,6 +784,10 @@ function updateUI(s) {
   btnStart.disabled = !isIdle;
   const modeSelect = document.getElementById('measure-mode');
   modeSelect.disabled = !isIdle;
+  // Sync dropdown from server state (respects CLI --measure-mode)
+  if (s.measure_mode && isIdle) {
+    modeSelect.value = s.measure_mode;
+  }
 
   // Disable "Detailed Scan" option when no gantry connected
   const detailedOption = modeSelect.querySelector('option[value="3d"]');
@@ -854,9 +884,34 @@ function updateUI(s) {
   updateWaypointTable(s);
   if (mapCanvasReady) drawMap(s);
 
-  // Auto-load 3D visualization when patrol completes (server auto-generates)
+  // Show inline results when patrol completes
   if (s.nav_state === 'done' && lastNavState !== 'done') {
-    // Poll for 3D readiness every 3s for up to 30s
+    // Show inline results panel
+    const inlinePanel = document.getElementById('inline-results');
+    inlinePanel.style.display = '';
+
+    // Load 2D heatmap inline (poll until ready)
+    const heatmapImg = document.getElementById('inline-heatmap');
+    let heatmapPollCount = 0;
+    const pollHeatmap = setInterval(async () => {
+      heatmapPollCount++;
+      try {
+        const r = await fetch('/api/2d_status');
+        const d = await r.json();
+        if (d.status === 'ready') {
+          clearInterval(pollHeatmap);
+          heatmapImg.src = '/api/sensor_heatmap_2d?t=' + Date.now();
+          heatmapImg.style.display = '';
+        }
+      } catch(e) {}
+      if (heatmapPollCount >= 20) clearInterval(pollHeatmap);
+    }, 2000);
+
+    // Poll for 3D readiness and show link
+    const text3d = document.getElementById('inline-3d-text');
+    const link3d = document.getElementById('inline-3d-link');
+    text3d.textContent = 'Generating 3D map...';
+    link3d.style.display = 'none';
     let pollCount = 0;
     const pollViz = setInterval(async () => {
       pollCount++;
@@ -865,10 +920,16 @@ function updateUI(s) {
         const d = await r.json();
         if (d.status === 'ready') {
           clearInterval(pollViz);
+          text3d.innerHTML = '3D map ready! &nbsp; <code style="font-size:0.85em; background:#f0f0f0; padding:2px 8px; border-radius:4px;">sensor_monitor/data/sensor_3d_interactive.html</code>';
+          link3d.href = '/api/sensor_3d?t=' + Date.now();
+          link3d.style.display = 'inline-block';
           load3DIframe();
+        } else if (d.status === 'error') {
+          clearInterval(pollViz);
+          text3d.textContent = '3D generation failed: ' + d.message;
         }
       } catch(e) {}
-      if (pollCount >= 10) clearInterval(pollViz);
+      if (pollCount >= 20) clearInterval(pollViz);
     }, 3000);
   }
 }
@@ -1056,9 +1117,9 @@ function updateWaypointTable(s) {
     const status = (s.waypoint_statuses && s.waypoint_statuses[i]) || 'pending';
     const wp = waypoints[i] || {x:0, y:0};
     const logs = s.sensor_log ? s.sensor_log.filter(e => e.waypoint === i + 1) : [];
-    const lowEntry = logs.find(e => e.measurement_phase === 'low');
-    const highEntry = logs.find(e => e.measurement_phase === 'high');
-    const elevatedEntry = logs.find(e => e.measurement_phase === 'elevated');
+    const lowEntry = logs.find(e => e.measurement_phase === 'low' || e.measurement_phase === 'mid');
+    const highEntry = logs.find(e => e.measurement_phase === 'high' || e.measurement_phase === 'elevated');
+    const elevatedEntry = highEntry;
     const fallbackEntry = logs.length > 0 && !lowEntry && !highEntry && !elevatedEntry ? logs[0] : null;
     const primary = lowEntry || elevatedEntry || fallbackEntry;
     const lowVal = primary && primary.sensor_value !== '' ? parseFloat(primary.sensor_value) : null;
@@ -1362,9 +1423,9 @@ function drawMap(s) {
 
     // Get sensor readings for this waypoint
     const logs = s.sensor_log ? s.sensor_log.filter(e => e.waypoint === i + 1) : [];
-    const lowEntry = logs.find(e => e.measurement_phase === 'low');
-    const highEntry = logs.find(e => e.measurement_phase === 'high');
-    const elevatedEntry = logs.find(e => e.measurement_phase === 'elevated');
+    const lowEntry = logs.find(e => e.measurement_phase === 'low' || e.measurement_phase === 'mid');
+    const highEntry = logs.find(e => e.measurement_phase === 'high' || e.measurement_phase === 'elevated');
+    const elevatedEntry = highEntry;
     const fallback = logs.length > 0 && !lowEntry && !highEntry && !elevatedEntry ? logs[0] : null;
     const primaryEntry = lowEntry || elevatedEntry || fallback;
     const primaryVal = primaryEntry && primaryEntry.sensor_value !== '' ? parseFloat(primaryEntry.sensor_value) : null;
@@ -1460,11 +1521,9 @@ async function check3DExists() {
 }
 
 function load3DIframe() {
-  const iframe = document.getElementById('sensor-3d-iframe');
-  const mode = latestState && latestState.measure_mode;
-  const phase = mode === '3d' ? current3DPhase : '';
-  iframe.src = '/api/sensor_3d' + (phase ? '?phase=' + phase + '&' : '?') + 't=' + Date.now();
-  iframe.style.display = 'block';
+  const link = document.getElementById('3d-open-link');
+  link.href = '/api/sensor_3d?t=' + Date.now();
+  document.getElementById('3d-link-container').style.display = 'block';
   document.getElementById('iframe-placeholder').style.display = 'none';
 }
 

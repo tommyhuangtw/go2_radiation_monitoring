@@ -49,7 +49,7 @@ class AutoNavigator:
                  rotate_tolerance=0.05, move_tolerance=0.05,
                  gantry_host=None, gantry_port=8090,
                  gantry_height=1500.0, measure_duration=5.0,
-                 measure_mode="2d"):
+                 measure_mode="3d"):
         self._bridge_mode = bridge_host is not None
         self._bridge_client = None
 
@@ -199,7 +199,7 @@ class AutoNavigator:
             print(f"  Gantry:      NOT CONFIGURED (no --gantry-host)")
 
         # Measure mode
-        mode_label = "2D (single elevated height)" if self.measure_mode == "2d" else "3D (dual altitude)"
+        mode_label = "2D (single elevated height)" if self.measure_mode == "2d" else "3D (dual altitude: mid + top)"
         print(f"  Mode:        {mode_label}")
 
         print("=" * 60 + "\n")
@@ -307,7 +307,7 @@ class AutoNavigator:
                 break
 
             # Stuck detection
-            if time.time() - last_progress_check_time > 5.0:
+            if time.time() - last_progress_check_time > 1.0:
                 if last_yaw_error is not None and abs(abs(yaw_error) - abs(last_yaw_error)) < 0.02:
                     print(f"    [Rotate] No progress, skipping (error: {math.degrees(yaw_error):.1f})")
                     break
@@ -407,7 +407,7 @@ class AutoNavigator:
         self.sport_client.StopMove()
         print(f"    [Move] Complete! Final dist: {self.distance_to(target_x, target_y):.3f}m")
 
-    def move_to_point(self, target_x, target_y, rotate_tolerance=0.05, move_tolerance=0.05):
+    def move_to_point(self, target_x, target_y, rotate_tolerance=0.12, move_tolerance=0.05):
         """Two-phase navigation: rotate then move forward."""
         x, y, _ = self.get_position()
         print(f"  Current: ({x:.2f}, {y:.2f}), Target: ({target_x:.2f}, {target_y:.2f})")
@@ -504,6 +504,24 @@ class AutoNavigator:
             self.gantry_client.move_to(0)
             if not self.gantry_client.wait_for_arrival(timeout=timeout):
                 raise RuntimeError("Gantry failed to reach home position")
+
+    def _ensure_gantry_at_mid(self, timeout=60.0):
+        """Block until gantry is at mid position (gantry_height / 2)."""
+        if not self.gantry_client:
+            return
+        mid = self.gantry_height / 2
+        state = self.gantry_client.get_state()
+        pos = state.get("current_position_mm", 0)
+        if not state.get("moving", False) and abs(pos - mid) < 5:
+            return
+        # Gantry might still be lowering from previous waypoint — wait
+        print(f"    Waiting for gantry to reach {mid}mm...")
+        if not self.gantry_client.wait_for_arrival(timeout=timeout):
+            # Still not at mid — force it
+            print(f"    Gantry not at mid, forcing move to {mid}mm...")
+            self.gantry_client.move_to(mid)
+            if not self.gantry_client.wait_for_arrival(timeout=timeout):
+                raise RuntimeError("Gantry failed to reach mid position")
 
     def save_sensor_data(self):
         """Save sensor log to CSV."""
@@ -747,26 +765,36 @@ class AutoNavigator:
                         self.gantry_client.move_to(0)
 
                 elif self.gantry_client and self.measure_mode == "3d":
-                    # --- 3D MODE: dual-altitude measurement cycle ---
+                    # --- 3D MODE: dual-altitude (mid + top) measurement cycle ---
+                    mid_height = self.gantry_height / 2
 
-                    # Ensure gantry is at home (may be lowering from previous waypoint)
-                    self._ensure_gantry_home(timeout=120)
+                    # Ensure gantry is at mid (raised before first WP, or lowered concurrently)
+                    if i == 0:
+                        self.nav_state = "gantry_raising"
+                        self.waypoint_statuses[i] = "gantry_raising"
+                        print(f"    Raising gantry to {mid_height}mm (mid)...")
+                        self.gantry_client.move_to(mid_height)
+                        if not self.gantry_client.wait_for_arrival(timeout=120):
+                            state = self.gantry_client.get_state()
+                            raise RuntimeError(f"Gantry failed to reach {mid_height}mm: {state.get('last_error', 'timeout')}")
+                    else:
+                        self._ensure_gantry_at_mid(timeout=120)
                     if self._is_stopped():
                         break
 
-                    # Low altitude measurement
+                    # Mid-height measurement (2.5s)
                     self.nav_state = "collecting_low"
                     self.waypoint_statuses[i] = "collecting_low"
-                    print(f"    Collecting low-altitude sensor data ({self.measure_duration}s)...")
-                    self._collect_sensor_averaged(i + 1, duration=self.measure_duration,
-                                                  altitude_mm=0, phase="low")
+                    print(f"    Collecting sensor data at {mid_height}mm (2.5s)...")
+                    self._collect_sensor_averaged(i + 1, duration=2.5,
+                                                  altitude_mm=mid_height, phase="mid")
                     if self._is_stopped():
                         break
 
-                    # Raise gantry
+                    # Raise to top
                     self.nav_state = "gantry_raising"
                     self.waypoint_statuses[i] = "gantry_raising"
-                    print(f"    Raising gantry to {self.gantry_height}mm...")
+                    print(f"    Raising gantry to {self.gantry_height}mm (top)...")
                     self.gantry_client.move_to(self.gantry_height)
                     if not self.gantry_client.wait_for_arrival(timeout=120):
                         state = self.gantry_client.get_state()
@@ -774,12 +802,12 @@ class AutoNavigator:
                     if self._is_stopped():
                         break
 
-                    # High altitude measurement
+                    # Top measurement (2.5s)
                     self.nav_state = "collecting_high"
                     self.waypoint_statuses[i] = "collecting_high"
-                    print(f"    Collecting high-altitude sensor data ({self.measure_duration}s)...")
-                    self._collect_sensor_averaged(i + 1, duration=self.measure_duration,
-                                                  altitude_mm=self.gantry_height, phase="high")
+                    print(f"    Collecting sensor data at {self.gantry_height}mm (2.5s)...")
+                    self._collect_sensor_averaged(i + 1, duration=2.5,
+                                                  altitude_mm=self.gantry_height, phase="elevated")
                     if self._is_stopped():
                         break
 
@@ -797,8 +825,13 @@ class AutoNavigator:
                             if self._is_stopped():
                                 break
 
-                        # Start lowering gantry (async — runs in parallel with navigation)
-                        print(f"    Lowering gantry to home (parallel with navigation)...")
+                        # Lower to mid (async — runs in parallel with navigation)
+                        print(f"    Lowering gantry to {mid_height}mm (parallel with navigation)...")
+                        self.gantry_client.move_to(mid_height)
+
+                    else:
+                        # Last waypoint: lower to home
+                        print(f"    Lowering gantry to home...")
                         self.gantry_client.move_to(0)
 
                 else:
@@ -826,6 +859,7 @@ class AutoNavigator:
                                 break
 
             if not self._is_stopped():
+                self.save_sensor_data()  # Save BEFORE signaling done
                 self.nav_state = "done"
                 print(f"\n>>> Patrol complete!")
 
@@ -858,8 +892,9 @@ class AutoNavigator:
             print("Standing down...")
             self.sport_client.StandDown()
 
-            print("\nSaving sensor data...")
-            self.save_sensor_data()
+            if self._is_stopped() and self.sensor_log:
+                print("\nSaving sensor data (interrupted)...")
+                self.save_sensor_data()
 
             if self._is_stopped():
                 self.nav_state = "idle"
@@ -1003,7 +1038,7 @@ if __name__ == "__main__":
                         help="Gantry raised height in mm (default: 140)")
     parser.add_argument("--measure-duration", type=float, default=5.0,
                         help="Sensor measurement duration in seconds (default: 5.0)")
-    parser.add_argument("--measure-mode", choices=["2d", "3d"], default="2d",
+    parser.add_argument("--measure-mode", choices=["2d", "3d"], default="3d",
                         help="2d: single elevated measurement (fast), 3d: dual-altitude (default: 2d)")
     parser.add_argument("--web", action="store_true",
                         help="Launch web UI instead of CLI mode")

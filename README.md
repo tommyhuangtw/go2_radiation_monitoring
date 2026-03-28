@@ -29,9 +29,10 @@ Arduino (serial) → sensor_bridge.py (Jetson) → TCP:9876 → auto_navigator.p
 PC ──HTTP:8090──→ gantry_control.py (Jetson) ──USB-UART──→ TMC2209 → stepper motor
 ```
 
-In **2D mode** (default), the gantry raises once at the first waypoint and stays elevated
-for all measurements — fast single-height scan. In **3D mode**, the gantry raises/lowers
-at each waypoint for dual-altitude measurement. Both modes log average + stddev.
+In **2D mode**, the gantry raises once at the first waypoint and stays elevated
+for all measurements — fast single-height scan. In **3D mode** (default), the gantry
+measures at mid-height then raises to the top at each waypoint for dual-altitude
+profiling. Both modes log average + stddev.
 
 **WiFi mode** (no ethernet cable needed):
 
@@ -270,14 +271,11 @@ Red spheres and route line should overlay the point cloud correctly. If waypoint
 Place the robot on the taped starting mark (same position + heading as mapping), then:
 
 ```bash
-# Full system — tested configuration (sensor + gantry):
-python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207
-
-# Or with explicit params:
+# Full system — tested configuration (sensor + gantry, dual-altitude):
 python sensor_monitor/auto_navigator.py --web \
     --jetson 192.168.0.207 \
-    --gantry-height 140 \
-    --measure-duration 5
+    --gantry-height 3600 \
+    --measure-duration 2.5
 ```
 
 > `--jetson 192.168.0.207` is the Jetson's WiFi IP. It sets `--bridge`, `--sensor-host`,
@@ -295,8 +293,8 @@ python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --no-gantry
 # Gantry only, no sensor (test motor without Arduino):
 python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --no-sensor
 
-# Dual-altitude 3D scan mode:
-python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --measure-mode 3d
+# Single-height 2D scan mode (faster):
+python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --measure-mode 2d
 
 # CLI mode (no web UI):
 python sensor_monitor/auto_navigator.py --bridge 192.168.0.207 --no-sensor
@@ -305,22 +303,46 @@ python sensor_monitor/auto_navigator.py --bridge 192.168.0.207 --no-sensor
 > **Tip:** Add `--no-sensor` or `--no-gantry` to skip those connections.
 > Individual flags (e.g., `--gantry-height 300`) work alongside `--jetson`.
 
+**Individual IP flags** (when services are on different hosts, or for debugging):
+
+```bash
+# Equivalent to --jetson 192.168.0.207 (all three on same host):
+python sensor_monitor/auto_navigator.py --web \
+    --bridge 192.168.0.207 \
+    --sensor-host 192.168.0.207 \
+    --gantry-host 192.168.0.207
+
+# Bridge on Jetson WiFi, sensor on Jetson ethernet (direct DDS):
+python sensor_monitor/auto_navigator.py --web \
+    --bridge 192.168.0.207 \
+    --sensor-host 192.168.123.18
+
+# Bridge only, no sensor or gantry:
+python sensor_monitor/auto_navigator.py --web \
+    --bridge 192.168.0.207 \
+    --no-sensor --no-gantry
+```
+
+> `--bridge` sets the DDS bridge host (port 9877). `--sensor-host` sets the sensor
+> bridge host (port 9876, default `192.168.123.18`). `--gantry-host` sets the gantry
+> controller host (port 8090). `--jetson` sets all three to the same IP.
+
 ### 6. Open the Web UI
 
 Open **http://localhost:8080** in your browser, then click **Start Patrol**.
 
-**2D Scan mode (default):**
+**3D Scan mode (default):**
+1. Gantry raises to mid-height before first waypoint
+2. Robot navigates to waypoint → measures at mid-height for 2.5s
+3. Gantry raises to top → measures for 2.5s
+4. Operator clicks **Continue Patrol**
+5. Gantry lowers to mid-height while robot navigates to next waypoint
+
+**2D Scan mode** (`--measure-mode 2d`):
 1. Gantry raises sensor at first waypoint
-2. Robot navigates to each waypoint → measures for 5s at elevated height
+2. Robot navigates to each waypoint → measures at elevated height
 3. Operator clicks **Continue Patrol** to proceed
 4. Gantry lowers after last waypoint
-
-**3D Scan mode** (`--measure-mode 3d`):
-1. Robot navigates to waypoint
-2. Measures at ground level for 5s
-3. Gantry raises → measures at elevated position for 5s
-4. Operator clicks **Continue Patrol**
-5. Gantry lowers while robot navigates to next waypoint
 
 After all waypoints, the robot stands down and 3D/2D visualizations auto-generate.
 

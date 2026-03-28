@@ -336,7 +336,7 @@ async def websocket_endpoint(ws: WebSocket):
             msg = json.loads(data)
             cmd = msg.get("cmd")
             if cmd == "start":
-                mode = msg.get("mode", "2d")
+                mode = msg.get("mode", navigator.measure_mode)
                 if mode in ("2d", "3d"):
                     navigator.measure_mode = mode
                 _handle_start_patrol()
@@ -389,10 +389,7 @@ def _auto_generate_viz():
         try:
             _3d_gen_status = "generating"
             from sensor_surface_sphere_overlay import generate_3d_html_only
-            # Always generate default (all data)
             generate_3d_html_only(phase=None)
-            if mode == "3d":
-                generate_3d_html_only(phase="low")
             _3d_gen_status = "ready"
             _3d_gen_message = "3D visualization generated"
             print("Auto-generated 3D visualization")
@@ -405,8 +402,6 @@ def _auto_generate_viz():
             _2d_gen_status = "generating"
             from sensor_surface_sphere_overlay import generate_2d_heatmap_only
             generate_2d_heatmap_only(phase=None)
-            if mode == "3d":
-                generate_2d_heatmap_only(phase="low")
             _2d_gen_status = "ready"
             _2d_gen_message = "2D heatmap generated"
             print("Auto-generated 2D heatmap")
@@ -414,16 +409,6 @@ def _auto_generate_viz():
             _2d_gen_status = "error"
             _2d_gen_message = str(e)
             print(f"Auto 2D generation failed: {e}")
-
-        # Generate high-altitude versions for 3D mode
-        if mode == "3d":
-            try:
-                from sensor_surface_sphere_overlay import generate_3d_html_only, generate_2d_heatmap_only
-                generate_3d_html_only(phase="high")
-                generate_2d_heatmap_only(phase="high")
-                print("Auto-generated high-altitude visualizations")
-            except Exception as e:
-                print(f"High-altitude viz generation failed: {e}")
 
     threading.Thread(target=viz_worker, daemon=True).start()
 

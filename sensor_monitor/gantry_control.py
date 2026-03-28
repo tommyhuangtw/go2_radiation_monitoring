@@ -35,8 +35,12 @@ import serial
 # ----------------------------
 MOTOR_STEPS_PER_REV = 200.0          # NEMA17, 1.8 deg/step
 MICROSTEPS = 16                      # native driver microsteps configured in CHOPCONF
-LEADSCREW_MM_PER_REV = 8.0           # change if your screw/belt differs
-STEPS_PER_MM = (MOTOR_STEPS_PER_REV * MICROSTEPS) / LEADSCREW_MM_PER_REV
+LEADSCREW_MM_PER_REV = 8.0           # physical leadscrew pitch
+STEPS_PER_MM = (MOTOR_STEPS_PER_REV * MICROSTEPS) / LEADSCREW_MM_PER_REV  # = 400
+
+# Empirical scale: 33 motor-mm = ~900mm physical travel
+# Converts user-facing mm to internal motor-mm
+MM_SCALE = 33.0 / 900.0
 
 # TMC2209 UART / motion config
 DEFAULT_BAUD = 115200
@@ -307,13 +311,15 @@ class GantryController:
             self._stop_event.clear()
             start_mm = self.state.current_position_mm
             delta_mm = float(target_mm) - start_mm
-            if abs(delta_mm) < (1.0 / self.steps_per_mm):
+            if abs(delta_mm) < 0.5:
                 self.state.last_target_mm = float(target_mm)
                 self.state.status = "at_target"
                 return
 
-            direction = 1 if delta_mm > 0 else -1
-            total_usteps = abs(self.mm_to_microsteps(delta_mm))
+            # Scale user-facing mm to internal motor-mm
+            motor_delta = delta_mm * MM_SCALE
+            direction = 1 if motor_delta > 0 else -1
+            total_usteps = abs(self.mm_to_microsteps(motor_delta))
             target_v = max(1000, min(VACTUAL_MAX, abs(self.default_vactual)))
             target_usteps_s = self._vactual_to_microsteps_per_sec(target_v)
             if target_usteps_s <= 0:

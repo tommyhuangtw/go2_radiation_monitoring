@@ -230,11 +230,18 @@ def _load_sensor_data_aligned(phase_filter=None):
             if phase_filter and phase and phase != phase_filter:
                 continue
             raw = row.get("sensor_value", "")
+            # Map phase to fixed physical heights for visualization
+            if phase == "mid":
+                z = 0.56
+            elif phase == "elevated":
+                z = 1.2
+            else:
+                z = float(row.get("altitude_mm", 0)) / 1000.0
             data.append({
                 "waypoint": int(row.get("waypoint", 0)),
                 "x": float(row["x"]),
                 "y": float(row["y"]),
-                "z": float(row["z"]),
+                "z": z,
                 "yaw": float(row["yaw"]),
                 "sensor_value": float(raw) if raw else None,
             })
@@ -534,8 +541,16 @@ def _export_html(valid_data, vmin, vmax, floor_z, surface_mesh,
     fig.add_trace(go.Scatter3d(
         x=sx, y=sy, z=sz,
         mode="markers+text",
-        marker=dict(size=14, color=sphere_colors, line=dict(width=2, color="white"),
-                    opacity=0.95),
+        marker=dict(
+            size=14,
+            color=sv,
+            colorscale=[[0, "rgb(0,0,255)"], [0.333, "rgb(0,255,255)"],
+                        [0.667, "rgb(255,255,0)"], [1, "rgb(255,0,0)"]],
+            cmin=vmin, cmax=vmax,
+            colorbar=dict(title="Sensor", thickness=15, len=0.5),
+            line=dict(width=2, color="white"),
+            opacity=0.95,
+        ),
         text=[f"WP{d['waypoint']}: {d['sensor_value']:.0f}" for d in valid_data],
         textposition="top center",
         textfont=dict(size=11, color="white"),
@@ -581,7 +596,14 @@ def _export_html(valid_data, vmin, vmax, floor_z, surface_mesh,
     )
 
     html_path = os.path.join(DATA_DIR, html_filename)
-    fig.write_html(html_path, include_plotlyjs="cdn")
+    fig.write_html(html_path, include_plotlyjs=True)
+    # Fix: ensure 100% height works in standalone and iframe contexts
+    with open(html_path, "r") as f:
+        html_content = f.read()
+    html_content = html_content.replace(
+        "<head>", "<head><style>html,body{height:100%;margin:0;}</style>", 1)
+    with open(html_path, "w") as f:
+        f.write(html_content)
     print(f"Exported HTML: {html_path}")
 
 
