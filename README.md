@@ -21,7 +21,16 @@ lidar_mapper.py → route_recorder.py → auto_navigator.py   → sensor_heatmap
 
 ```
 Arduino (serial) → sensor_bridge.py (Jetson) → TCP:9876 → auto_navigator.py (PC)
+                                                           --sensor {sound,radiation}
 ```
+
+The system supports multiple sensor types via `--sensor`. Currently available:
+- **sound** — analog sound level (0–1023 ADC), for testing without a radiation source
+- **radiation** — Geiger counter (J305) outputting µSv/h dose rate
+
+The `--sensor` flag configures labels, units, display precision, and default alert
+thresholds throughout the web UI and heatmap visualizations. The data pipeline itself
+is sensor-agnostic — it passes through raw numeric values regardless of sensor type.
 
 **Gantry control** (optional vertical sensor positioning):
 
@@ -169,8 +178,15 @@ sudo usermod -aG dialout unitree
 # Log out and back in for group change to take effect
 ```
 
-The Arduino sketch should print sensor values via `Serial.println()`. Both bare
-numbers (`"123"`) and prefixed lines (`"Sound Intensity: 123"`) are supported.
+Two Arduino sketches are provided in `sensor_monitor/arduino/`:
+
+| Sketch | Directory | Output format | Use case |
+|--------|-----------|---------------|----------|
+| `sound_sensor.ino` | `arduino/sound_sensor/` | `"Sound Intensity: 512"` (0–1023) | Testing without radiation source |
+| `radiation_sensor.ino` | `arduino/radiation_sensor/` | `"0.0234"` (µSv/h float) | Production radiation monitoring |
+
+Flash the appropriate sketch to your Arduino. The sensor bridge accepts both bare
+numbers (`"123"`) and prefixed lines (`"Sound Intensity: 123"`).
 
 ### Gantry deployment
 
@@ -271,15 +287,29 @@ Red spheres and route line should overlay the point cloud correctly. If waypoint
 Place the robot on the taped starting mark (same position + heading as mapping), then:
 
 ```bash
-# Full system — tested configuration (sensor + gantry, dual-altitude):
+# Full system — radiation sensor + gantry, dual-altitude, 10s averaging:
 python sensor_monitor/auto_navigator.py --web \
     --jetson 192.168.0.207 \
+    --sensor radiation \
     --gantry-height 3600 \
-    --measure-duration 2.5
+    --measure-duration 10
+
+# Sound sensor for testing (default if --sensor omitted):
+python sensor_monitor/auto_navigator.py --web \
+    --jetson 192.168.0.207 \
+    --sensor sound
 ```
 
 > `--jetson 192.168.0.207` is the Jetson's WiFi IP. It sets `--bridge`, `--sensor-host`,
 > and `--gantry-host` to the same address in one flag.
+>
+> `--sensor radiation` sets the web UI title to "Radiation Patrol Monitor", units to
+> µSv/h, and alert thresholds to 0.3/1.0 µSv/h. `--sensor sound` (default) uses raw
+> ADC values with thresholds 300/600.
+>
+> `--measure-duration N` sets how long the robot dwells at each waypoint to average
+> sensor readings (default 5s). Used in all modes including no-gantry. Each individual
+> reading (~5Hz) is also saved to `sensor_data_raw.csv` for analysis.
 
 **Other configurations:**
 
@@ -287,17 +317,17 @@ python sensor_monitor/auto_navigator.py --web \
 # Navigation only (test robot movement, no sensor/gantry):
 python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --no-sensor --no-gantry
 
-# Sensor only, no gantry:
-python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --no-gantry
+# Sensor only, no gantry (average 10s per waypoint):
+python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --sensor radiation --no-gantry --measure-duration 10
 
 # Gantry only, no sensor (test motor without Arduino):
 python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --no-sensor
 
 # Single-height 2D scan mode (faster):
-python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --measure-mode 2d
+python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --sensor radiation --measure-mode 2d
 
 # CLI mode (no web UI):
-python sensor_monitor/auto_navigator.py --bridge 192.168.0.207 --no-sensor
+python sensor_monitor/auto_navigator.py --bridge 192.168.0.207 --sensor radiation --no-gantry
 ```
 
 > **Tip:** Add `--no-sensor` or `--no-gantry` to skip those connections.
@@ -333,16 +363,20 @@ Open **http://localhost:8080** in your browser, then click **Start Patrol**.
 
 **3D Scan mode (default):**
 1. Gantry raises to mid-height before first waypoint
-2. Robot navigates to waypoint → measures at mid-height for 2.5s
-3. Gantry raises to top → measures for 2.5s
+2. Robot navigates to waypoint → measures at mid-height for `--measure-duration` seconds
+3. Gantry raises to top → measures for `--measure-duration` seconds
 4. Operator clicks **Continue Patrol**
 5. Gantry lowers to mid-height while robot navigates to next waypoint
 
 **2D Scan mode** (`--measure-mode 2d`):
 1. Gantry raises sensor at first waypoint
-2. Robot navigates to each waypoint → measures at elevated height
+2. Robot navigates to each waypoint → measures at elevated height for `--measure-duration` seconds
 3. Operator clicks **Continue Patrol** to proceed
 4. Gantry lowers after last waypoint
+
+**No-gantry mode** (`--no-gantry`):
+1. Robot navigates to each waypoint → averages sensor readings for `--measure-duration` seconds
+2. No gantry movement, single altitude per waypoint
 
 After all waypoints, the robot stands down and 3D/2D visualizations auto-generate.
 
@@ -359,8 +393,8 @@ Web UI features:
 The web UI auto-generates visualizations after patrol. For CLI-only use:
 
 ```bash
-python sensor_monitor/sensor_heatmap.py            # 3D + 2D
-python sensor_monitor/sensor_heatmap.py --mode 2d   # 2D only
+python sensor_monitor/sensor_heatmap.py --sensor radiation          # 3D + 2D with radiation labels
+python sensor_monitor/sensor_heatmap.py --sensor sound --mode 2d    # 2D only with sound labels
 ```
 
 ![2D sensor heatmap overlaid on floor plan](docs/images/sensor_heatmap_2d.png)
@@ -394,9 +428,31 @@ All scripts are in `sensor_monitor/` and write data to `sensor_monitor/data/`.
 | `floor_plan.npy` | lidar_mapper.py | Raw 2D occupancy grid (numpy) |
 | `map_meta.json` | lidar_mapper.py | Grid metadata (resolution, origin, size) |
 | `waypoints.json` | route_recorder.py | Monitoring waypoints (x, y, yaw) |
-| `sensor_data.csv` | auto_navigator.py | Timestamped position + sensor readings (with altitude_mm, measurement_phase, sensor_stddev for dual-altitude mode) |
+| `sensor_data.csv` | auto_navigator.py | Averaged sensor readings (1 row per waypoint per phase, with sensor_stddev) |
+| `sensor_data_raw.csv` | auto_navigator.py | Raw individual readings at ~5Hz (every sample within `--measure-duration`) |
+| `history_data/` | auto_navigator.py | Timestamped copies of each patrol run (CSVs + waypoints + heatmap + 3D HTML) |
 
 Data files are large and excluded from git via `.gitignore`.
+
+### Patrol history
+
+Each patrol automatically saves a timestamped snapshot to `sensor_monitor/data/history_data/`:
+
+```
+YYYYMMDD_HHMMSS_sensor_data.csv          # averaged results
+YYYYMMDD_HHMMSS_sensor_data_raw.csv      # raw ~5Hz readings
+YYYYMMDD_HHMMSS_waypoints.json           # route used
+YYYYMMDD_HHMMSS_sensor_heatmap_2d.png    # 2D visualization (after auto-generate)
+YYYYMMDD_HHMMSS_sensor_3d_interactive.html  # 3D visualization (after auto-generate)
+```
+
+List past runs:
+
+```bash
+python sensor_monitor/auto_navigator.py --list-history
+```
+
+Disable history with `--no-history`.
 
 ## Testing Individual Components
 
@@ -473,7 +529,8 @@ ls /dev/ttyACM*
 ```bash
 # Read raw serial output to confirm Arduino is sending data
 cat /dev/ttyACM0
-# You should see lines like "Sound Intensity: 42" or just "42"
+# Sound sensor: "Sound Intensity: 42" (0-1023 range)
+# Radiation sensor: "0.0234" (µSv/h, bare float)
 # Press Ctrl+C to stop
 ```
 
@@ -507,7 +564,8 @@ s.close()
 
 If this works, the sensor is ready for auto_navigator. You can now run:
 ```bash
-python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207
+# Use --sensor radiation for Geiger counter, or --sensor sound (default) for sound sensor
+python sensor_monitor/auto_navigator.py --web --jetson 192.168.0.207 --sensor radiation
 ```
 
 ### DDS bridge (robot state + commands)

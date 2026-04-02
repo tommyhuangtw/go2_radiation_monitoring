@@ -383,11 +383,25 @@ def _auto_generate_viz():
     global _3d_gen_status, _3d_gen_message, _2d_gen_status, _2d_gen_message
     mode = navigator.measure_mode if navigator else "2d"
 
+    # Reset statuses BEFORE spawning thread so UI polling doesn't see
+    # stale "ready" from a previous patrol and load the old PNG.
+    _3d_gen_status = "generating"
+    _3d_gen_message = ""
+    _2d_gen_status = "generating"
+    _2d_gen_message = ""
+
+    # Remove stale phase-specific heatmap PNGs from previous patrols.
+    # Auto-generate writes only the unsuffixed file (phase=None), but the
+    # UI may request ?phase=low which would match a leftover _low.png.
+    for suffix in ("_low", "_high"):
+        stale = DATA_DIR / f"sensor_heatmap_2d{suffix}.png"
+        if stale.exists():
+            stale.unlink()
+
     def viz_worker():
         global _3d_gen_status, _3d_gen_message, _2d_gen_status, _2d_gen_message
 
         try:
-            _3d_gen_status = "generating"
             from sensor_surface_sphere_overlay import generate_3d_html_only
             generate_3d_html_only(phase=None)
             _3d_gen_status = "ready"
@@ -399,7 +413,6 @@ def _auto_generate_viz():
             print(f"Auto 3D generation failed: {e}")
 
         try:
-            _2d_gen_status = "generating"
             from sensor_surface_sphere_overlay import generate_2d_heatmap_only
             generate_2d_heatmap_only(phase=None)
             _2d_gen_status = "ready"
@@ -409,6 +422,24 @@ def _auto_generate_viz():
             _2d_gen_status = "error"
             _2d_gen_message = str(e)
             print(f"Auto 2D generation failed: {e}")
+
+        # Copy generated viz to history directory
+        if navigator and getattr(navigator, '_history_ts', None):
+            ts = navigator._history_ts
+            history_dir = DATA_DIR / "history_data"
+            history_dir.mkdir(exist_ok=True)
+            for src_name, dst_suffix in [
+                ("sensor_heatmap_2d.png", "sensor_heatmap_2d.png"),
+                ("sensor_3d_interactive.html", "sensor_3d_interactive.html"),
+            ]:
+                src = DATA_DIR / src_name
+                if src.exists():
+                    try:
+                        import shutil
+                        shutil.copy2(str(src), str(history_dir / f"{ts}_{dst_suffix}"))
+                        print(f"  History: {ts}_{dst_suffix}")
+                    except OSError as e:
+                        print(f"WARNING: Failed to copy {src_name} to history: {e}")
 
     threading.Thread(target=viz_worker, daemon=True).start()
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Radiation Patrol Monitor</title>
+<title>Sensor Patrol Monitor</title>
 <style>
   :root {
     --bg: #f5f6fa; --bg-panel: #ffffff; --bg-header: #eef1f6;
@@ -329,7 +329,7 @@
 <header>
   <h1>
     <span class="conn-dot off" id="conn-dot"></span>
-    Radiation Patrol Monitor
+    <span id="page-title">Sensor Patrol Monitor</span>
   </h1>
   <div class="header-right">
     <button class="settings-btn" onclick="toggleSettings()" title="Settings">&#9881;</button>
@@ -342,12 +342,12 @@
     <span class="status-icon" id="status-icon">&#9208;</span>
     <div>
       <div class="status-headline" id="status-headline">Ready to Begin</div>
-      <div class="status-subtext" id="status-subtext">Press Start Patrol to begin radiation survey</div>
+      <div class="status-subtext" id="status-subtext">Press Start Patrol to begin sensor survey</div>
     </div>
   </div>
   <div class="status-banner-right">
     <div class="status-live-reading" id="status-live-reading">--</div>
-    <div class="status-live-label">Radiation Level</div>
+    <div class="status-live-label" id="status-live-label">Sensor Level</div>
   </div>
 </div>
 
@@ -439,7 +439,7 @@
       </div>
       <div class="wp-table-wrap">
         <table>
-          <thead><tr><th>Point</th><th class="col-position">Position</th><th id="th-low">Mid Level</th><th id="th-high">Top Level</th><th id="th-delta">Delta</th><th id="th-value" style="display:none;">Radiation Level</th><th>Status</th></tr></thead>
+          <thead><tr><th>Point</th><th class="col-position">Position</th><th id="th-low">Mid Level</th><th id="th-high">Top Level</th><th id="th-delta">Delta</th><th id="th-value" style="display:none;">Sensor Level</th><th>Status</th></tr></thead>
           <tbody id="wp-tbody"></tbody>
         </table>
       </div>
@@ -471,7 +471,7 @@
 <div class="main-grid">
   <div class="panel full-width">
     <div class="panel-header">
-      3D Radiation Map
+      <span id="section-3d-title">3D Sensor Map</span>
       <div style="display:flex; align-items:center; gap:12px;">
         <span class="gen-status" id="gen3d-status"></span>
         <span id="phase-toggle-3d" style="display:none;">
@@ -511,7 +511,7 @@
 <div class="main-grid">
   <div class="panel full-width" id="heatmap-section">
     <div class="panel-header">
-      2D Radiation Heat Map
+      <span id="section-2d-title">2D Sensor Heat Map</span>
       <div style="display:flex; align-items:center; gap:12px;">
         <span class="gen-status" id="gen2d-status"></span>
         <span id="phase-toggle-2d" style="display:none;">
@@ -562,9 +562,9 @@
     <div class="settings-label">Alert Thresholds</div>
     <div style="margin-top:6px;">
       <label>Safe below</label>
-      <input type="number" id="thresh-safe" value="300" onchange="saveThresholds()">
+      <input type="number" step="any" id="thresh-safe" value="300" onchange="saveThresholds()">
       <label>Warning below</label>
-      <input type="number" id="thresh-warn" value="600" onchange="saveThresholds()">
+      <input type="number" step="any" id="thresh-warn" value="600" onchange="saveThresholds()">
     </div>
   </div>
   <!-- Robot Position (read-only) -->
@@ -704,9 +704,45 @@ function switchTab(name) {
   }
 }
 
+// ---- Sensor Config ----
+let _sensorName = 'Sensor';
+let _sensorUnit = '';
+let _sensorPrecision = 1;
+let _sensorConfigApplied = false;
+
+function applySensorConfig(s) {
+  if (_sensorConfigApplied || !s.sensor_type) return;
+  _sensorConfigApplied = true;
+  _sensorName = s.sensor_type;
+  _sensorUnit = s.sensor_unit || '';
+  _sensorPrecision = (s.sensor_precision != null) ? s.sensor_precision : 1;
+  const label = _sensorUnit ? _sensorName + ' (' + _sensorUnit + ')' : _sensorName;
+  document.title = _sensorName + ' Patrol Monitor';
+  document.getElementById('page-title').textContent = _sensorName + ' Patrol Monitor';
+  document.getElementById('status-live-label').textContent = label;
+  document.getElementById('th-value').textContent = label;
+  document.getElementById('section-3d-title').textContent = '3D ' + _sensorName + ' Map';
+  document.getElementById('section-2d-title').textContent = '2D ' + _sensorName + ' Heat Map';
+  // Pick up measure_duration from server
+  if (s.measure_duration != null) {
+    MEASURE_DURATION = s.measure_duration;
+  }
+  // Apply server-provided threshold defaults if user hasn't customized for this sensor
+  if (s.sensor_defaults) {
+    const key = 'go2_thresholds_' + _sensorName.toLowerCase().replace(/\s+/g, '_');
+    if (!localStorage.getItem(key)) {
+      document.getElementById('thresh-safe').value = s.sensor_defaults.safe;
+      document.getElementById('thresh-warn').value = s.sensor_defaults.warn;
+    }
+  }
+}
+
 // ---- Thresholds ----
+function _thresholdKey() {
+  return 'go2_thresholds_' + _sensorName.toLowerCase().replace(/\s+/g, '_');
+}
 function loadThresholds() {
-  const saved = localStorage.getItem('go2_thresholds');
+  const saved = localStorage.getItem(_thresholdKey());
   if (saved) {
     try {
       const t = JSON.parse(saved);
@@ -718,7 +754,7 @@ function loadThresholds() {
 function saveThresholds() {
   const safe = parseFloat(document.getElementById('thresh-safe').value) || 300;
   const warn = parseFloat(document.getElementById('thresh-warn').value) || 600;
-  localStorage.setItem('go2_thresholds', JSON.stringify({safe, warn}));
+  localStorage.setItem(_thresholdKey(), JSON.stringify({safe, warn}));
 }
 function getThresholds() {
   return {
@@ -772,6 +808,7 @@ function startPatrol() {
 
 // ---- UI Update ----
 function updateUI(s) {
+  applySensorConfig(s);
   if (lastNavState !== s.nav_state && s.nav_state === 'standing_up') {
     resetDisplayAlignment();
   }
@@ -834,7 +871,7 @@ function updateUI(s) {
   // Live reading in status banner
   const liveReading = document.getElementById('status-live-reading');
   if (s.sensor_value != null) {
-    liveReading.textContent = s.sensor_value.toFixed(1);
+    liveReading.textContent = s.sensor_value.toFixed(_sensorPrecision);
     const t = getThresholds();
     liveReading.className = 'status-live-reading ' + (s.sensor_value < t.safe ? 'reading-safe' : s.sensor_value < t.warn ? 'reading-warn' : 'reading-danger');
   } else {
@@ -937,7 +974,7 @@ function updateUI(s) {
 // ---- Status Banner ----
 let collectStartTime = null;
 let lastBannerState = null;
-const MEASURE_DURATION = 5.0;
+let MEASURE_DURATION = 5.0;
 
 function updateStatusBanner(s) {
   const banner = document.getElementById('status-banner');
@@ -993,11 +1030,11 @@ function updateStatusBanner(s) {
   }
 
   const config = {
-    idle:            { icon:'\u23F8',  headline:'Ready to Begin',                subtext:'Press Start Patrol to begin radiation survey',         bg:'var(--bg-header)',  border:'var(--border)', pulse:false, pulseColor:'' },
+    idle:            { icon:'\u23F8',  headline:'Ready to Begin',                subtext:`Press Start Patrol to begin ${_sensorName.toLowerCase()} survey`, bg:'var(--bg-header)',  border:'var(--border)', pulse:false, pulseColor:'' },
     standing_up:     { icon:'\uD83E\uDD16', headline:'Robot Preparing...',       subtext:'Standing up and initializing...',                      bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
     navigating:      { icon:'\u27A1\uFE0F', headline:`Robot Moving to Point ${wpNum} of ${total}`, subtext:'Navigating to measurement location',  bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
-    collecting:      { icon:'\uD83D\uDCE1', headline:'Measuring Radiation...',   subtext:'Collecting sensor data...',                            bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
-    collecting_low:  { icon:'\uD83D\uDCE1', headline:'Measuring Radiation...',   subtext:`Ground level scan \u2014 ${remaining}s remaining`,     bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
+    collecting:      { icon:'\uD83D\uDCE1', headline:`Measuring ${_sensorName}...`, subtext:'Collecting sensor data...',                         bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
+    collecting_low:  { icon:'\uD83D\uDCE1', headline:`Measuring ${_sensorName}...`, subtext:`Ground level scan \u2014 ${remaining}s remaining`,  bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
     gantry_raising:  { icon:'\u2B06\uFE0F', headline:'Raising Sensor Arm...',    subtext:`Moving to ${gantryTarget}mm (now at ${gantryPos}mm)`,  bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
     collecting_high: { icon:'\uD83D\uDCE1', headline:'Measuring at Height...',   subtext:`Raised scan at ${gantryTarget}mm \u2014 ${remaining}s remaining`, bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
     waiting:         { icon:'\u270B',  headline:'Waiting for You \u2014 Press Continue Patrol', subtext:'Robot stopped at measurement point',      bg:'#fff7ed',           border:'var(--orange)', pulse:false, pulseColor:'' },
@@ -1067,8 +1104,8 @@ function updateStepPipeline(s) {
 
 function formatSensorEntry(entry) {
   if (!entry || entry.sensor_value === '' || entry.sensor_value == null) return '--';
-  const val = parseFloat(entry.sensor_value).toFixed(1);
-  const std = entry.sensor_stddev != null && entry.sensor_stddev !== '' ? '\u00b1' + parseFloat(entry.sensor_stddev).toFixed(1) : '';
+  const val = parseFloat(entry.sensor_value).toFixed(_sensorPrecision);
+  const std = entry.sensor_stddev != null && entry.sensor_stddev !== '' ? '\u00b1' + parseFloat(entry.sensor_stddev).toFixed(_sensorPrecision) : '';
   return val + std;
 }
 
@@ -1149,7 +1186,7 @@ function updateWaypointTable(s) {
     if (r.lowVal != null && r.highVal != null) {
       const delta = r.highVal - r.lowVal;
       const arrow = delta > 0 ? '\u2191' : delta < 0 ? '\u2193' : '=';
-      deltaStr = `${arrow}${Math.abs(delta).toFixed(0)}`;
+      deltaStr = `${arrow}${Math.abs(delta).toFixed(_sensorPrecision)}`;
     }
 
     html += `<tr class="wp-${r.status}${isMax ? ' wp-max-reading' : ''}">`;
@@ -1179,8 +1216,8 @@ function updateWaypointTable(s) {
     document.getElementById('sum-warn').textContent = warnCount + ' Warning';
     document.getElementById('sum-danger').textContent = dangerCount + ' Danger';
     const avg = allValues.reduce((a,b) => a+b, 0) / allValues.length;
-    document.getElementById('sum-avg').textContent = avg.toFixed(0);
-    document.getElementById('sum-max').textContent = maxVal.toFixed(0) + ' (Point ' + maxWp + ')';
+    document.getElementById('sum-avg').textContent = avg.toFixed(_sensorPrecision);
+    document.getElementById('sum-max').textContent = maxVal.toFixed(_sensorPrecision) + ' (Point ' + maxWp + ')';
   } else {
     summary.style.display = 'none';
   }
@@ -1452,18 +1489,7 @@ function drawMap(s) {
       ctx.fillStyle = '#fff'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(i + 1, p.x, p.y);
 
-      // Value label (dark shadow for contrast on light bg)
-      ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-      ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.fillText(primaryVal.toFixed(0), p.x + radius + 5 + 1, p.y + 1);
-      ctx.fillStyle = sensorColor; ctx.fillText(primaryVal.toFixed(0), p.x + radius + 5, p.y);
-
-      // Altitude arrow (if dual readings)
-      if (highVal != null) {
-        const arrow = highVal > primaryVal ? '\u2191' : highVal < primaryVal ? '\u2193' : '=';
-        ctx.font = '10px sans-serif';
-        ctx.fillStyle = '#555';
-        ctx.fillText(arrow, p.x + radius + 5, p.y + 12);
-      }
+      // Sensor values intentionally not shown on map to keep route readable
     } else {
       // Pending / in-progress: simple colored dot
       ctx.beginPath(); ctx.arc(p.x, p.y, 8, 0, 2*Math.PI);

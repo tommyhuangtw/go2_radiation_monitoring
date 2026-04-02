@@ -13,8 +13,8 @@ void impulse() {
 
 void setup() {
   Serial.begin(9600);
-  pinMode(3, INPUT);
-  // 監測第 3 號腳位的電壓下降 (FALLING)
+  pinMode(22, INPUT);
+  // 監測第 22 號腳位的電壓下降 (FALLING)
   attachInterrupt(digitalPinToInterrupt(3), impulse, FALLING);
   previousMillis = millis();
 }

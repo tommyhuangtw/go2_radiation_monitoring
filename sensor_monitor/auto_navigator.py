@@ -39,6 +39,25 @@ from unitree_sdk2py.idl.unitree_go.msg.dds_ import SportModeState_
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
+SENSOR_PROFILES = {
+    "sound": {
+        "name": "Sound Intensity",
+        "unit": "",
+        "label": "Sound Level",
+        "default_safe": 300,
+        "default_warn": 600,
+        "precision": 0,
+    },
+    "radiation": {
+        "name": "Radiation",
+        "unit": "\u00b5Sv/h",
+        "label": "Radiation Level",
+        "default_safe": 0.3,
+        "default_warn": 1.0,
+        "precision": 3,
+    },
+}
+
 
 class AutoNavigator:
     def __init__(self, network_interface="enp0s2",
@@ -49,8 +68,10 @@ class AutoNavigator:
                  rotate_tolerance=0.05, move_tolerance=0.05,
                  gantry_host=None, gantry_port=8090,
                  gantry_height=1500.0, measure_duration=5.0,
-                 measure_mode="3d"):
+                 measure_mode="3d",
+                 sensor_type="sound"):
         self._bridge_mode = bridge_host is not None
+        self.sensor_profile = SENSOR_PROFILES.get(sensor_type, SENSOR_PROFILES["sound"])
         self._bridge_client = None
 
         # Navigation tolerances
@@ -70,6 +91,8 @@ class AutoNavigator:
 
         # Sensor data log
         self.sensor_log = []
+        self.raw_sensor_log = []
+        self._history_ts = None  # set by save_sensor_data() for viz history copies
         self.save_history = save_history
 
         # Navigation state (for web mode)
@@ -455,17 +478,30 @@ class AutoNavigator:
 
     def _collect_sensor_averaged(self, waypoint_idx, duration=5.0, altitude_mm=0, phase="low"):
         """Collect sensor readings over `duration` seconds, log the average and stddev."""
+        x, y, yaw = self.get_position()
         readings = []
         t0 = time.time()
+        last_raw_ts = 0.0
         while time.time() - t0 < duration:
             if self._is_stopped():
                 break
             val = self.read_sensor()
             if val is not None:
                 readings.append(val)
+                now = time.time()
+                if now - last_raw_ts >= 1.0:
+                    last_raw_ts = now
+                    self.raw_sensor_log.append({
+                        "timestamp": now,
+                        "waypoint": waypoint_idx,
+                        "x": round(x, 4),
+                        "y": round(y, 4),
+                        "yaw": round(yaw, 4),
+                        "sensor_value": val,
+                        "altitude_mm": altitude_mm,
+                        "measurement_phase": phase,
+                    })
             time.sleep(0.2)  # ~5Hz sampling
-
-        x, y, yaw = self.get_position()
         if readings:
             avg = statistics.mean(readings)
             std = statistics.stdev(readings) if len(readings) > 1 else 0.0
@@ -524,22 +560,33 @@ class AutoNavigator:
                 raise RuntimeError("Gantry failed to reach mid position")
 
     def save_sensor_data(self):
-        """Save sensor log to CSV."""
+        """Save sensor log to CSV (averaged + raw)."""
         if not self.sensor_log:
             print("No sensor data to save.")
             return
 
         os.makedirs(DATA_DIR, exist_ok=True)
-        csv_path = os.path.join(DATA_DIR, "sensor_data.csv")
 
+        # Averaged data (1 row per waypoint per phase)
+        csv_path = os.path.join(DATA_DIR, "sensor_data.csv")
         fieldnames = ["timestamp", "waypoint", "x", "y", "z", "yaw", "sensor_value",
                       "sensor_stddev", "altitude_mm", "measurement_phase"]
         with open(csv_path, 'w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(self.sensor_log)
+        print(f"Saved {len(self.sensor_log)} averaged data points to {csv_path}")
 
-        print(f"Saved {len(self.sensor_log)} data points to {csv_path}")
+        # Raw data (every individual reading at ~5Hz)
+        raw_csv_path = os.path.join(DATA_DIR, "sensor_data_raw.csv")
+        if self.raw_sensor_log:
+            raw_fieldnames = ["timestamp", "waypoint", "x", "y", "yaw",
+                              "sensor_value", "altitude_mm", "measurement_phase"]
+            with open(raw_csv_path, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=raw_fieldnames)
+                writer.writeheader()
+                writer.writerows(self.raw_sensor_log)
+            print(f"Saved {len(self.raw_sensor_log)} raw readings to {raw_csv_path}")
 
         if not self.save_history:
             return
@@ -548,12 +595,20 @@ class AutoNavigator:
         history_dir = os.path.join(DATA_DIR, "history_data")
         os.makedirs(history_dir, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        history_path = os.path.join(history_dir, f"{ts}_sensor_data.csv")
-        try:
-            shutil.copy2(csv_path, history_path)
-            print(f"Saved history snapshot to {history_path}")
-        except OSError as e:
-            print(f"WARNING: Failed to save history snapshot: {e}")
+        self._history_ts = ts
+
+        for src, suffix in [
+            (csv_path, "sensor_data.csv"),
+            (raw_csv_path, "sensor_data_raw.csv"),
+            (os.path.join(DATA_DIR, "waypoints.json"), "waypoints.json"),
+        ]:
+            if os.path.exists(src):
+                dst = os.path.join(history_dir, f"{ts}_{suffix}")
+                try:
+                    shutil.copy2(src, dst)
+                    print(f"  History: {dst}")
+                except OSError as e:
+                    print(f"WARNING: Failed to copy {suffix} to history: {e}")
 
     def load_waypoints(self):
         """Load waypoints from JSON file."""
@@ -616,6 +671,14 @@ class AutoNavigator:
             "error": self.patrol_error,
             "gantry": gantry_state,
             "measure_mode": self.measure_mode,
+            "measure_duration": self.measure_duration,
+            "sensor_type": self.sensor_profile["name"],
+            "sensor_unit": self.sensor_profile["unit"],
+            "sensor_precision": self.sensor_profile["precision"],
+            "sensor_defaults": {
+                "safe": self.sensor_profile["default_safe"],
+                "warn": self.sensor_profile["default_warn"],
+            },
         }
 
     # ------------------------------------------------------------------
@@ -632,6 +695,8 @@ class AutoNavigator:
         self.total_waypoints = len(waypoints)
         self.waypoint_statuses = ["pending"] * len(waypoints)
         self.sensor_log = []
+        self.raw_sensor_log = []
+        self._history_ts = None
         self.patrol_error = ""
 
         # Stand up
@@ -782,11 +847,11 @@ class AutoNavigator:
                     if self._is_stopped():
                         break
 
-                    # Mid-height measurement (2.5s)
+                    # Mid-height measurement
                     self.nav_state = "collecting_low"
                     self.waypoint_statuses[i] = "collecting_low"
-                    print(f"    Collecting sensor data at {mid_height}mm (2.5s)...")
-                    self._collect_sensor_averaged(i + 1, duration=2.5,
+                    print(f"    Collecting sensor data at {mid_height}mm ({self.measure_duration}s)...")
+                    self._collect_sensor_averaged(i + 1, duration=self.measure_duration,
                                                   altitude_mm=mid_height, phase="mid")
                     if self._is_stopped():
                         break
@@ -802,11 +867,11 @@ class AutoNavigator:
                     if self._is_stopped():
                         break
 
-                    # Top measurement (2.5s)
+                    # Top measurement
                     self.nav_state = "collecting_high"
                     self.waypoint_statuses[i] = "collecting_high"
-                    print(f"    Collecting sensor data at {self.gantry_height}mm (2.5s)...")
-                    self._collect_sensor_averaged(i + 1, duration=2.5,
+                    print(f"    Collecting sensor data at {self.gantry_height}mm ({self.measure_duration}s)...")
+                    self._collect_sensor_averaged(i + 1, duration=self.measure_duration,
                                                   altitude_mm=self.gantry_height, phase="elevated")
                     if self._is_stopped():
                         break
@@ -835,11 +900,12 @@ class AutoNavigator:
                         self.gantry_client.move_to(0)
 
                 else:
-                    # --- ORIGINAL SINGLE-MEASUREMENT (no gantry) ---
+                    # --- MEASUREMENT (no gantry) ---
                     self.nav_state = "collecting"
                     self.waypoint_statuses[i] = "collecting"
-                    time.sleep(0.3)
-                    self.log_data_point(i + 1)
+                    print(f"    Collecting sensor data ({self.measure_duration}s)...")
+                    self._collect_sensor_averaged(i + 1, duration=self.measure_duration,
+                                                  altitude_mm=0, phase="")
 
                     if self._is_stopped():
                         break
@@ -1048,7 +1114,37 @@ if __name__ == "__main__":
                         help="Skip gantry connection entirely")
     parser.add_argument("--jetson", default=None, metavar="HOST",
                         help="Jetson WiFi IP — shorthand for --bridge, --sensor-host, and --gantry-host")
+    parser.add_argument("--sensor", choices=list(SENSOR_PROFILES.keys()), default="sound",
+                        help="Sensor type: affects labels, units, thresholds (default: sound)")
+    parser.add_argument("--list-history", action="store_true",
+                        help="List saved patrol history and exit")
     args = parser.parse_args()
+
+    if args.list_history:
+        history_dir = os.path.join(DATA_DIR, "history_data")
+        if not os.path.isdir(history_dir):
+            print("No history data found.")
+            sys.exit(0)
+        import glob as glob_mod
+        files = sorted(glob_mod.glob(os.path.join(history_dir, "*_sensor_data.csv")))
+        if not files:
+            print("No history data found.")
+            sys.exit(0)
+        print(f"\n  {'Date/Time':<22} {'Points':<8} {'Raw?':<6} {'Viz?':<6} File")
+        print(f"  {'-'*22} {'-'*8} {'-'*6} {'-'*6} {'-'*40}")
+        for f in files:
+            basename = os.path.basename(f)
+            ts_str = basename[:15]  # YYYYMMDD_HHMMSS
+            try:
+                with open(f) as fh:
+                    rows = sum(1 for _ in fh) - 1  # minus header
+            except Exception:
+                rows = "?"
+            raw_exists = os.path.exists(f.replace("_sensor_data.csv", "_sensor_data_raw.csv"))
+            viz_exists = os.path.exists(f.replace("_sensor_data.csv", "_sensor_heatmap_2d.png"))
+            print(f"  {ts_str:<22} {rows:<8} {'yes' if raw_exists else 'no':<6} {'yes' if viz_exists else 'no':<6} {basename}")
+        print()
+        sys.exit(0)
 
     # --no-gantry overrides any gantry-host setting
     if args.no_gantry:
@@ -1076,7 +1172,8 @@ if __name__ == "__main__":
                           gantry_port=args.gantry_port,
                           gantry_height=args.gantry_height,
                           measure_duration=args.measure_duration,
-                          measure_mode=args.measure_mode)
+                          measure_mode=args.measure_mode,
+                          sensor_type=args.sensor)
 
     if args.web:
         from web_server import run_web_server
