@@ -3,154 +3,368 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Go2 Patrol Monitor</title>
+<title>Sensor Patrol Monitor</title>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; }
+  :root {
+    --bg: #f5f6fa; --bg-panel: #ffffff; --bg-header: #eef1f6;
+    --border: #d8dce6; --accent: #2563eb; --accent-dim: #dbeafe;
+    --green: #16a34a; --yellow: #ca8a04; --red: #dc2626;
+    --orange: #ea580c; --purple: #7c3aed;
+    --text: #1e293b; --text-muted: #64748b;
+    --radius: 12px; --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+    --safe-bg: #f0fdf4; --warn-bg: #fefce8; --danger-bg: #fef2f2;
+  }
 
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  /* Header */
   header {
     display: flex; justify-content: space-between; align-items: center;
-    padding: 12px 20px; background: #16213e; border-bottom: 2px solid #0f3460;
+    padding: 14px 24px;
+    background: var(--bg-header);
+    border-bottom: 1px solid var(--border);
   }
-  header h1 { font-size: 1.3em; font-weight: 600; }
-  #status-badge {
-    padding: 4px 14px; border-radius: 12px; font-size: 0.85em; font-weight: 600;
-    background: #555; text-transform: uppercase;
+  header h1 { font-size: 1.25em; font-weight: 700; letter-spacing: -0.3px; display: flex; align-items: center; gap: 10px; }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .settings-btn {
+    width: 36px; height: 36px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg-panel); cursor: pointer; font-size: 1.2em; display: flex;
+    align-items: center; justify-content: center; transition: background 0.15s;
   }
+  .settings-btn:hover { background: var(--accent-dim); }
 
+  /* Connection dot */
+  .conn-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+  .conn-dot.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .conn-dot.off { background: var(--red); }
+
+  /* Status Banner */
+  .status-banner {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 24px; min-height: 72px;
+    background: var(--bg-header); border-bottom: 1px solid var(--border);
+    transition: background 0.4s, border-color 0.4s;
+  }
+  .status-banner.pulse {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: inset 0 0 0 0 transparent; }
+    50% { box-shadow: inset 0 0 30px 0 var(--pulse-color, rgba(37,99,235,0.1)); }
+  }
+  .status-banner-left { display: flex; align-items: center; gap: 14px; }
+  .status-icon { font-size: 1.8em; min-width: 44px; text-align: center; line-height: 1; }
+  .status-headline { font-size: 1.15em; font-weight: 700; }
+  .status-subtext { font-size: 0.85em; color: var(--text-muted); margin-top: 2px; }
+  .status-banner-right {
+    text-align: right; min-width: 120px;
+  }
+  .status-live-reading {
+    font-size: 2em; font-weight: 700; font-family: 'JetBrains Mono', 'Courier New', monospace;
+    line-height: 1.1;
+  }
+  .status-live-label { font-size: 0.75em; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .reading-safe { color: var(--green); }
+  .reading-warn { color: var(--yellow); }
+  .reading-danger { color: var(--red); }
+
+  /* Tabs */
+  .tab-bar {
+    display: flex; gap: 0; padding: 0 24px; background: var(--bg-panel);
+    border-bottom: 1px solid var(--border);
+  }
+  .tab-btn {
+    padding: 12px 24px; border: none; background: transparent; color: var(--text-muted);
+    font-size: 0.88em; font-weight: 600; cursor: pointer; position: relative;
+    transition: color 0.2s;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { color: var(--accent); }
+  .tab-btn.active::after {
+    content: ''; position: absolute; bottom: 0; left: 12px; right: 12px;
+    height: 2px; background: var(--accent); border-radius: 1px;
+  }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* Grid layout */
   .main-grid {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
-    padding: 12px; max-width: 1400px; margin: 0 auto;
+    display: grid; grid-template-columns: 3fr 2fr; gap: 14px;
+    padding: 14px 24px; max-width: 1600px; margin: 0 auto;
   }
 
+  /* Panels */
   .panel {
-    background: #16213e; border-radius: 8px; border: 1px solid #0f3460; overflow: hidden;
+    background: var(--bg-panel); border-radius: var(--radius);
+    border: 1px solid var(--border); box-shadow: var(--shadow); overflow: hidden;
   }
   .panel-header {
-    padding: 8px 14px; background: #0f3460; font-size: 0.85em; font-weight: 600;
-    text-transform: uppercase; letter-spacing: 0.5px;
+    padding: 10px 16px; background: var(--bg-header); font-size: 0.82em;
+    font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px;
+    display: flex; justify-content: space-between; align-items: center;
+    border-bottom: 1px solid var(--border); color: var(--text-muted);
   }
-  .panel-body { padding: 12px; }
+  .panel-body { padding: 14px; }
+  .full-width { grid-column: 1 / -1; }
 
   /* Floor plan */
-  #map-panel { position: relative; }
-  #map-container { position: relative; width: 100%; background: #111; }
-  #floor-plan-img {
-    display: block; width: 100%; height: auto; opacity: 0;
-    transition: opacity 0.3s;
-  }
+  #map-container { position: relative; width: 100%; flex: 1; background: #f0f0f0; border-radius: 8px; overflow: hidden; }
+  #floor-plan-img { display: block; width: 100%; height: auto; opacity: 0; transition: opacity 0.3s; }
   #floor-plan-img.loaded { opacity: 1; }
-  #map-canvas {
-    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-    pointer-events: none;
-  }
-  #map-no-data { padding: 40px; text-align: center; color: #888; }
+  #map-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: grab; }
+  #map-canvas.dragging { cursor: grabbing; }
+  #map-no-data { display: none; padding: 50px; text-align: center; color: var(--text-muted); }
+  #map-zoom-controls { position: absolute; top: 8px; right: 8px; display: flex; flex-direction: column; gap: 4px; z-index: 10; }
+  #map-zoom-controls button { width: 30px; height: 30px; border: 1px solid var(--border); border-radius: 6px;
+    background: rgba(255,255,255,0.9); color: var(--text); font-size: 16px; font-weight: 700; cursor: pointer; line-height: 1;
+    display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow); }
+  #map-zoom-controls button:hover { background: #fff; }
+
+  /* Floor plan + camera heights */
+  #map-panel .panel-body { display: flex; flex-direction: column; min-height: 350px; max-height: 550px; }
+  #camera-panel .panel-body { display: flex; flex-direction: column; }
 
   /* Camera */
-  #camera-feed {
-    display: block; width: 100%; max-height: 350px; object-fit: contain;
-    background: #000; border-radius: 4px;
-  }
-  #camera-error { display: none; padding: 60px 20px; text-align: center; color: #888; background: #111; border-radius: 4px; }
+  #camera-feed { display: block; width: 100%; max-height: 280px; object-fit: contain; background: #f0f0f0; border-radius: 8px; }
+  #camera-error { display: none; padding: 40px 20px; text-align: center; color: var(--text-muted); background: #f0f0f0; border-radius: 8px; flex: 1; }
 
   /* Controls */
-  .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
   .btn {
-    padding: 10px 20px; border: none; border-radius: 6px; font-size: 0.95em;
-    font-weight: 600; cursor: pointer; transition: all 0.15s;
+    padding: 10px 22px; border: none; border-radius: 8px; font-size: 0.9em;
+    font-weight: 700; cursor: pointer; transition: all 0.15s; letter-spacing: 0.3px;
   }
-  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .btn-start { background: #27ae60; color: #fff; }
-  .btn-start:hover:not(:disabled) { background: #2ecc71; }
-  .btn-next { background: #2980b9; color: #fff; }
-  .btn-next:hover:not(:disabled) { background: #3498db; }
-  .btn-stop { background: #c0392b; color: #fff; }
-  .btn-stop:hover:not(:disabled) { background: #e74c3c; }
+  .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .btn-start {
+    background: var(--green); color: #fff;
+    padding: 16px 48px; font-size: 1.2em; border-radius: 12px;
+  }
+  .btn-start.compact { padding: 10px 22px; font-size: 0.9em; border-radius: 8px; }
+  .btn-start:hover:not(:disabled) { background: #15803d; transform: translateY(-1px); }
+  .btn-continue { background: var(--accent); color: #fff; }
+  .btn-continue:hover:not(:disabled) { background: #1d4ed8; transform: translateY(-1px); }
+  .btn-stop { background: transparent; color: var(--red); border: 2px solid var(--red); }
+  .btn-stop:hover:not(:disabled) { background: var(--danger-bg); }
+  .btn-3d { background: var(--purple); color: #fff; font-size: 0.78em; padding: 6px 16px; border-radius: 6px; }
+  .btn-3d:hover:not(:disabled) { background: #6d28d9; transform: translateY(-1px); }
 
   /* Progress */
-  .progress-section { margin-bottom: 12px; }
   .progress-bar-bg {
-    width: 100%; height: 20px; background: #2c3e50; border-radius: 10px; overflow: hidden;
+    width: 100%; height: 6px; background: #e2e8f0; border-radius: 3px; overflow: hidden; margin-bottom: 6px;
   }
   .progress-bar-fill {
-    height: 100%; background: linear-gradient(90deg, #2980b9, #27ae60);
-    transition: width 0.3s; border-radius: 10px;
+    height: 100%; background: linear-gradient(90deg, var(--accent), var(--green));
+    transition: width 0.4s ease; border-radius: 3px;
   }
-  .progress-text { font-size: 0.85em; color: #aaa; margin-top: 4px; }
+  .progress-text { font-size: 0.82em; color: var(--text-muted); }
 
-  /* Live data */
-  .data-grid {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+  /* Step Pipeline */
+  .step-pipeline {
+    display: flex; align-items: center; gap: 0; margin-top: 12px;
+    padding: 10px 4px;
   }
-  .data-item {
-    background: #1a1a2e; padding: 10px; border-radius: 6px; border: 1px solid #2c3e50;
+  .step-item {
+    display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0;
   }
-  .data-label { font-size: 0.75em; color: #888; text-transform: uppercase; margin-bottom: 2px; }
-  .data-value { font-size: 1.2em; font-weight: 600; font-family: 'Courier New', monospace; }
-  .data-item.sensor-safe .data-value { color: #2ecc71; }
-  .data-item.sensor-warn .data-value { color: #f39c12; }
-  .data-item.sensor-danger .data-value { color: #e74c3c; }
-
-  /* Thresholds */
-  .threshold-row {
-    display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap;
+  .step-dot {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: #e2e8f0; border: 2px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.7em; font-weight: 700; color: var(--text-muted);
+    transition: all 0.3s;
   }
-  .threshold-row label { font-size: 0.8em; color: #aaa; }
-  .threshold-row input {
-    width: 70px; padding: 4px 6px; border: 1px solid #2c3e50; border-radius: 4px;
-    background: #1a1a2e; color: #eee; font-size: 0.85em;
+  .step-label {
+    font-size: 0.65em; color: var(--text-muted); text-align: center;
+    white-space: nowrap; transition: color 0.3s;
   }
+  .step-item.active .step-dot { transform: scale(1.2); border-width: 3px; }
+  .step-item.done .step-dot { background: var(--green); border-color: var(--green); color: #fff; }
+  .step-item.done .step-label { color: var(--green); }
+  .step-item.active .step-label { color: var(--text); font-weight: 700; }
+  .step-line { flex: 1; height: 2px; background: var(--border); min-width: 12px; transition: background 0.3s; }
+  .step-line.done { background: var(--green); }
 
   /* Waypoint table */
-  .wp-table-wrap { max-height: 250px; overflow-y: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
-  th { background: #0f3460; padding: 6px 8px; text-align: left; position: sticky; top: 0; }
-  td { padding: 5px 8px; border-bottom: 1px solid #2c3e50; }
-  tr.wp-done td { color: #2ecc71; }
-  tr.wp-navigating td { color: #3498db; }
-  tr.wp-collecting td { color: #f39c12; }
-  tr.wp-waiting td { color: #e67e22; }
-  tr.wp-pending td { color: #777; }
+  .wp-table-wrap { max-height: 280px; overflow-y: auto; }
+  .wp-table-wrap::-webkit-scrollbar { width: 4px; }
+  .wp-table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82em; }
+  th { background: var(--bg-header); padding: 8px 10px; text-align: left; position: sticky; top: 0; font-weight: 600; color: var(--text-muted); }
+  td { padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  tr.wp-done td { color: var(--green); }
+  tr.wp-navigating td { color: var(--accent); }
+  tr.wp-collecting td { color: var(--yellow); }
+  tr.wp-collecting_low td { color: var(--yellow); }
+  tr.wp-gantry_raising td { color: var(--purple); }
+  tr.wp-collecting_high td { color: var(--orange); }
+  tr.wp-waiting td { color: var(--orange); }
+  tr.wp-pending td { color: var(--text-muted); }
 
-  /* Heatmap section */
-  #heatmap-section { display: none; grid-column: 1 / -1; }
-  #heatmap-container { position: relative; width: 100%; background: #111; }
-  #heatmap-img { display: block; width: 100%; height: auto; opacity: 0; transition: opacity 0.3s; }
+  /* Patrol summary bar */
+  .patrol-summary {
+    display: none; padding: 10px 14px; border-radius: 8px; margin-bottom: 10px;
+    background: var(--bg-header); border: 1px solid var(--border);
+    font-size: 0.85em; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  .patrol-summary .badge {
+    padding: 3px 10px; border-radius: 12px; font-weight: 700; font-size: 0.82em;
+  }
+  .patrol-summary .badge-safe { background: var(--green); color: #fff; }
+  .patrol-summary .badge-warn { background: var(--yellow); color: #fff; }
+  .patrol-summary .badge-danger { background: var(--red); color: #fff; }
+  .patrol-summary .stat { color: var(--text-muted); }
+  .patrol-summary .stat b { color: var(--text); }
+
+  /* Threshold-colored table cells */
+  td.cell-safe { color: var(--green); }
+  td.cell-warn { color: var(--yellow); font-weight: 700; }
+  td.cell-danger { color: var(--red); font-weight: 700; }
+  td.cell-delta { font-size: 0.85em; color: var(--text-muted); }
+  tr.wp-max-reading { background: var(--danger-bg); }
+
+  /* 3D panel */
+  #panel-3d-body { padding: 0; }
+  #iframe-placeholder {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 500px; color: var(--text-muted); font-size: 0.9em; gap: 16px;
+    background: radial-gradient(ellipse at center, #f8fafc 0%, #eef1f6 70%);
+  }
+  #iframe-placeholder .hint { font-size: 0.8em; opacity: 0.6; }
+  #sensor-3d-iframe { width: 100%; height: 600px; border: none; display: none; background: #fff; }
+  .gen-status { font-size: 0.78em; font-weight: 400; color: var(--text-muted); }
+
+  /* Heatmap */
+  #heatmap-section { display: none; }
+  #heatmap-container { position: relative; width: 100%; max-height: 70vh; background: #f0f0f0; border-radius: 8px; overflow: hidden; }
+  #heatmap-img { display: block; width: 100%; height: auto; max-height: 70vh; object-fit: contain; opacity: 0; transition: opacity 0.3s; }
   #heatmap-img.loaded { opacity: 1; }
   #heatmap-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
   .legend-bar {
-    display: flex; align-items: center; gap: 8px; padding: 8px 0; font-size: 0.8em;
+    display: flex; align-items: center; gap: 10px; padding: 10px 0; font-size: 0.78em; color: var(--text-muted);
   }
   .legend-gradient {
-    flex: 1; height: 16px; border-radius: 3px;
-    background: linear-gradient(90deg, #2ecc71, #f1c40f, #e74c3c);
+    flex: 1; height: 12px; border-radius: 6px;
+    background: linear-gradient(90deg, #0000ff, #00ffff, #ffff00, #ff0000);
   }
 
-  /* Connection indicator */
-  .conn-dot {
-    display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px;
+  /* Spinner */
+  .spinner {
+    width: 32px; height: 32px; border: 3px solid var(--border);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin 0.8s linear infinite;
   }
-  .conn-dot.on { background: #2ecc71; }
-  .conn-dot.off { background: #e74c3c; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* Full width panels */
-  .full-width { grid-column: 1 / -1; }
+  /* Settings Overlay */
+  .settings-backdrop {
+    display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.3); z-index: 900;
+  }
+  .settings-backdrop.open { display: block; }
+  .settings-overlay {
+    position: fixed; top: 0; right: -360px; width: 360px; height: 100%;
+    background: var(--bg-panel); border-left: 1px solid var(--border);
+    box-shadow: -4px 0 24px rgba(0,0,0,0.1);
+    z-index: 1000; padding: 24px; overflow-y: auto;
+    transition: right 0.3s ease;
+  }
+  .settings-overlay.open { right: 0; }
+  .settings-section { margin-bottom: 20px; }
+  .settings-label { font-size: 0.78em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 8px; }
+  .settings-section select {
+    width: 100%; padding: 8px 12px; border-radius: 8px; background: var(--bg-header);
+    color: var(--text); border: 1px solid var(--border); font-size: 0.9em; font-weight: 600;
+  }
+  .settings-section input[type="number"] {
+    width: 80px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg-header); color: var(--text); font-size: 0.85em; margin-left: 4px; margin-right: 12px;
+  }
+  .settings-section label { font-size: 0.82em; color: var(--text-muted); }
+  .settings-position { font-family: 'JetBrains Mono', 'Courier New', monospace; font-size: 0.9em; }
+  .settings-position span { font-weight: 700; }
 
-  @media (max-width: 800px) {
-    .main-grid { grid-template-columns: 1fr; }
+  /* Gantry vertical bar (settings) */
+  .gantry-vis {
+    display: flex; align-items: flex-end; gap: 8px; height: 48px; margin-top: 8px;
+  }
+  .gantry-bar-track {
+    width: 18px; height: 100%; background: #e2e8f0; border-radius: 4px;
+    position: relative; overflow: hidden; border: 1px solid var(--border);
+  }
+  .gantry-bar-fill {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    background: linear-gradient(to top, var(--accent), var(--purple));
+    border-radius: 0 0 3px 3px; transition: height 0.4s ease;
+  }
+  .gantry-bar-info { display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; }
+  .gantry-bar-pos { font-size: 1.1em; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+  .gantry-bar-dir { font-size: 0.75em; color: var(--text-muted); }
+
+  /* Responsive */
+  @media (max-width: 1024px) {
+    .main-grid { grid-template-columns: 1fr; padding: 10px; gap: 10px; }
+    .btn-start { width: 100%; }
+    .btn-continue { width: 100%; }
+    .btn-stop { width: 100%; }
+    .controls { flex-direction: column; }
+    .status-banner { flex-direction: column; gap: 8px; text-align: center; }
+    .status-banner-right { text-align: center; }
+  }
+  @media (max-width: 768px) {
+    .tab-bar { padding: 0 10px; }
+    #sensor-3d-iframe { height: 400px; }
+    .step-pipeline { gap: 0; }
+    .step-label { font-size: 0.55em; }
+    .step-dot { width: 22px; height: 22px; font-size: 0.6em; }
+    td.col-position { display: none; }
+    th.col-position { display: none; }
+    .btn { min-height: 44px; }
+    .settings-overlay { width: 100%; right: -100%; }
   }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>Go2 Patrol Monitor</h1>
-  <span id="status-badge">Connecting...</span>
+  <h1>
+    <span class="conn-dot off" id="conn-dot"></span>
+    <span id="page-title">Sensor Patrol Monitor</span>
+  </h1>
+  <div class="header-right">
+    <button class="settings-btn" onclick="toggleSettings()" title="Settings">&#9881;</button>
+  </div>
 </header>
 
+<!-- Status Banner -->
+<div class="status-banner" id="status-banner">
+  <div class="status-banner-left">
+    <span class="status-icon" id="status-icon">&#9208;</span>
+    <div>
+      <div class="status-headline" id="status-headline">Ready to Begin</div>
+      <div class="status-subtext" id="status-subtext">Press Start Patrol to begin sensor survey</div>
+    </div>
+  </div>
+  <div class="status-banner-right">
+    <div class="status-live-reading" id="status-live-reading">--</div>
+    <div class="status-live-label" id="status-live-label">Sensor Level</div>
+  </div>
+</div>
+
+<!-- Tabs -->
+<div class="tab-bar">
+  <button class="tab-btn active" onclick="switchTab('monitor')">Live Patrol</button>
+  <button class="tab-btn" onclick="switchTab('3d')">3D Map</button>
+  <button class="tab-btn" onclick="switchTab('heatmap')">Heat Map</button>
+</div>
+
+<!-- ============================================================= -->
+<!-- TAB: Live Patrol -->
+<!-- ============================================================= -->
+<div class="tab-content active" id="tab-monitor">
 <div class="main-grid">
 
-  <!-- Floor Plan -->
+  <!-- Floor Plan (left, larger) -->
   <div class="panel" id="map-panel">
     <div class="panel-header">Floor Plan</div>
     <div class="panel-body">
@@ -159,91 +373,156 @@
              onload="this.classList.add('loaded'); initMapCanvas();"
              onerror="document.getElementById('map-no-data').style.display='block';">
         <canvas id="map-canvas"></canvas>
-        <div id="map-no-data">No floor plan available.<br>Run lidar_mapper.py first.</div>
+        <div id="map-zoom-controls">
+          <button onclick="mapZoomBtn(1.4)" title="Zoom in">+</button>
+          <button onclick="mapZoomBtn(1/1.4)" title="Zoom out">&minus;</button>
+          <button onclick="mapZoomReset()" title="Reset view" style="font-size:11px;">&#8634;</button>
+        </div>
+        <div id="map-no-data">No floor plan loaded.<br>Please contact your technician.</div>
       </div>
     </div>
   </div>
 
-  <!-- Camera Feed -->
-  <div class="panel">
-    <div class="panel-header">Camera Feed</div>
-    <div class="panel-body">
-      <img id="camera-feed" src="/video" alt="Camera Feed"
-           onerror="this.style.display='none'; document.getElementById('camera-error').style.display='block';">
-      <div id="camera-error">Camera unavailable</div>
-    </div>
-  </div>
-
-  <!-- Controls + Progress -->
-  <div class="panel">
-    <div class="panel-header">Controls</div>
-    <div class="panel-body">
-      <div class="controls">
-        <button class="btn btn-start" id="btn-start" onclick="sendCmd('start')">Start Patrol</button>
-        <button class="btn btn-next" id="btn-next" onclick="sendCmd('next')" disabled>Next Point</button>
-        <button class="btn btn-stop" id="btn-stop" onclick="sendCmd('stop')">Emergency Stop</button>
+  <!-- Right column: Camera + Controls stacked -->
+  <div style="display:flex; flex-direction:column; gap:14px;">
+    <!-- Camera Feed -->
+    <div class="panel" id="camera-panel">
+      <div class="panel-header">Camera Feed</div>
+      <div class="panel-body">
+        <img id="camera-feed" src="/video" alt="Camera Feed"
+             onerror="this.style.display='none'; document.getElementById('camera-error').style.display='block';">
+        <div id="camera-error">Camera unavailable</div>
       </div>
-      <div class="progress-section">
+    </div>
+
+    <!-- Controls + Progress -->
+    <div class="panel">
+      <div class="panel-header">Controls</div>
+      <div class="panel-body">
+        <div class="controls">
+          <button class="btn btn-start" id="btn-start" onclick="startPatrol()">Start Patrol</button>
+          <button class="btn btn-continue" id="btn-next" onclick="sendCmd('next')" disabled style="display:none;">Continue Patrol</button>
+          <button class="btn btn-stop" id="btn-stop" onclick="sendCmd('stop')">STOP ROBOT</button>
+        </div>
         <div class="progress-bar-bg">
           <div class="progress-bar-fill" id="progress-fill" style="width: 0%"></div>
         </div>
         <div class="progress-text" id="progress-text">Waiting to start...</div>
+
+        <!-- Step Pipeline (per-waypoint cycle) -->
+        <div class="step-pipeline" id="step-pipeline" style="display:none;">
+          <div class="step-item" id="step-nav"><div class="step-dot">1</div><div class="step-label">Move</div></div>
+          <div class="step-line" id="line-nav"></div>
+          <div class="step-item" id="step-low"><div class="step-dot">2</div><div class="step-label">Scan (ground)</div></div>
+          <div class="step-line" id="line-low"></div>
+          <div class="step-item" id="step-gantry"><div class="step-dot">3</div><div class="step-label">Raise Arm</div></div>
+          <div class="step-line" id="line-gantry"></div>
+          <div class="step-item" id="step-high"><div class="step-dot">4</div><div class="step-label">Scan (raised)</div></div>
+          <div class="step-line" id="line-high"></div>
+          <div class="step-item" id="step-wait"><div class="step-dot">5</div><div class="step-label">Continue?</div></div>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- Live Data -->
-  <div class="panel">
-    <div class="panel-header">Live Data</div>
-    <div class="panel-body">
-      <div class="data-grid">
-        <div class="data-item">
-          <div class="data-label">Position X</div>
-          <div class="data-value" id="val-x">--</div>
-        </div>
-        <div class="data-item">
-          <div class="data-label">Position Y</div>
-          <div class="data-value" id="val-y">--</div>
-        </div>
-        <div class="data-item">
-          <div class="data-label">Heading</div>
-          <div class="data-value" id="val-yaw">--</div>
-        </div>
-        <div class="data-item" id="sensor-item">
-          <div class="data-label">
-            <span class="conn-dot off" id="sensor-dot"></span>Sensor
-          </div>
-          <div class="data-value" id="val-sensor">N/A</div>
-        </div>
-      </div>
-      <div class="threshold-row">
-        <label>Safe &lt;</label>
-        <input type="number" id="thresh-safe" value="300" onchange="saveThresholds()">
-        <label>Warn &lt;</label>
-        <input type="number" id="thresh-warn" value="600" onchange="saveThresholds()">
-        <label>Danger &ge;</label>
-        <input type="number" id="thresh-danger" value="600" disabled
-               style="background:transparent; border-color:#555;">
-      </div>
-    </div>
-  </div>
-
-  <!-- Waypoint Log -->
+  <!-- Waypoint Results (full-width) -->
   <div class="panel full-width">
-    <div class="panel-header">Waypoint Log</div>
+    <div class="panel-header">Waypoint Results</div>
     <div class="panel-body">
+      <div class="patrol-summary" id="patrol-summary" style="display:none;">
+        <span class="stat"><b>Results:</b></span>
+        <span class="badge badge-safe" id="sum-safe">0 Safe</span>
+        <span class="badge badge-warn" id="sum-warn">0 Warning</span>
+        <span class="badge badge-danger" id="sum-danger">0 Danger</span>
+        <span class="stat">Avg: <b id="sum-avg">--</b></span>
+        <span class="stat">Max: <b id="sum-max">--</b></span>
+      </div>
       <div class="wp-table-wrap">
         <table>
-          <thead><tr><th>#</th><th>Position</th><th>Sensor</th><th>Status</th></tr></thead>
+          <thead><tr><th>Point</th><th class="col-position">Position</th><th id="th-low">Mid Level</th><th id="th-high">Top Level</th><th id="th-delta">Delta</th><th id="th-value" style="display:none;">Sensor Level</th><th>Status</th></tr></thead>
           <tbody id="wp-tbody"></tbody>
         </table>
       </div>
     </div>
   </div>
 
-  <!-- Heatmap (shown after patrol) -->
+  <!-- Inline Post-Patrol Results (shown on main tab after patrol completes) -->
+  <div class="panel full-width" id="inline-results" style="display:none;">
+    <div class="panel-header">Visualization Results</div>
+    <div class="panel-body" style="text-align:center; padding:16px;">
+      <img id="inline-heatmap" style="max-height:50vh; max-width:100%; object-fit:contain; border-radius:8px; display:none;" />
+      <div id="inline-3d-status" style="margin-top:16px; padding:12px; background:var(--bg-header); border-radius:8px;">
+        <span id="inline-3d-text" style="font-size:0.95em;">Generating 3D map...</span>
+        <a id="inline-3d-link" href="#" target="_blank" class="btn btn-3d"
+           style="display:none; margin-left:12px; padding:8px 20px; text-decoration:none;">
+          Open 3D Map in New Tab
+        </a>
+      </div>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<!-- ============================================================= -->
+<!-- TAB: 3D Map -->
+<!-- ============================================================= -->
+<div class="tab-content" id="tab-3d">
+<div class="main-grid">
+  <div class="panel full-width">
+    <div class="panel-header">
+      <span id="section-3d-title">3D Sensor Map</span>
+      <div style="display:flex; align-items:center; gap:12px;">
+        <span class="gen-status" id="gen3d-status"></span>
+        <span id="phase-toggle-3d" style="display:none;">
+          <button class="btn" style="padding:4px 14px; font-size:0.75em; border-radius:6px;"
+                  id="btn-3d-low" onclick="set3DPhase('low')">Ground Level</button>
+          <button class="btn" style="padding:4px 14px; font-size:0.75em; border-radius:6px; opacity:0.5;"
+                  id="btn-3d-high" onclick="set3DPhase('high')">Raised Level</button>
+        </span>
+        <button class="btn btn-3d" id="btn-gen3d" onclick="generate3D()">Build 3D Map</button>
+      </div>
+    </div>
+    <div id="panel-3d-body" style="padding:20px;">
+      <div id="iframe-placeholder">
+        <div class="spinner" id="gen-spinner" style="display:none;"></div>
+        <div id="placeholder-text">Click "Build 3D Map" to generate the visualization</div>
+        <div class="hint">Requires sensor_data.csv from a completed patrol</div>
+      </div>
+      <div id="3d-link-container" style="display:none; text-align:center; padding:20px;">
+        <p style="margin-bottom:12px;">3D visualization generated successfully.</p>
+        <a id="3d-open-link" href="/home/tommy/Desktop/unitree_sdk2_python/sensor_monitor/data/sensor_3d_interactive.html" target="_blank"
+           class="btn btn-3d" style="display:inline-block; padding:12px 28px; font-size:1.1em; text-decoration:none;">
+          Open 3D Map in New Tab
+        </a>
+        <p style="margin-top:12px; opacity:0.6; font-size:0.85em;">
+          File: <code>/sensor_monitor/data/sensor_3d_interactive.html</code>
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ============================================================= -->
+<!-- TAB: Heat Map -->
+<!-- ============================================================= -->
+<div class="tab-content" id="tab-heatmap">
+<div class="main-grid">
   <div class="panel full-width" id="heatmap-section">
-    <div class="panel-header">Sensor Heatmap</div>
+    <div class="panel-header">
+      <span id="section-2d-title">2D Sensor Heat Map</span>
+      <div style="display:flex; align-items:center; gap:12px;">
+        <span class="gen-status" id="gen2d-status"></span>
+        <span id="phase-toggle-2d" style="display:none;">
+          <button class="btn" style="padding:4px 14px; font-size:0.75em; border-radius:6px;"
+                  id="btn-2d-low" onclick="set2DPhase('low')">Ground Level</button>
+          <button class="btn" style="padding:4px 14px; font-size:0.75em; border-radius:6px; opacity:0.5;"
+                  id="btn-2d-high" onclick="set2DPhase('high')">Raised Level</button>
+        </span>
+        <button class="btn btn-3d" id="btn-gen2d" onclick="generate2DHeatmap()">Build Heat Map</button>
+      </div>
+    </div>
     <div class="panel-body">
       <div id="heatmap-container">
         <img id="heatmap-img" src="/api/floor_plan" alt=""
@@ -251,13 +530,73 @@
         <canvas id="heatmap-canvas"></canvas>
       </div>
       <div class="legend-bar">
-        <span>Safe</span>
+        <span>Low</span>
         <div class="legend-gradient"></div>
-        <span>Danger</span>
+        <span>High</span>
+      </div>
+      <div id="heatmap-empty" style="display:none; padding:50px; text-align:center; color:var(--text-muted);">
+        Complete a patrol to see heatmap data.
       </div>
     </div>
   </div>
+</div>
+</div>
 
+<!-- Settings Drawer -->
+<div class="settings-backdrop" id="settings-backdrop" onclick="toggleSettings()"></div>
+<div class="settings-overlay" id="settings-overlay">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+    <h3 style="font-size:1.1em; font-weight:700;">Settings</h3>
+    <button onclick="toggleSettings()" style="width:32px; height:32px; border-radius:8px; border:1px solid var(--border); background:var(--bg-header); cursor:pointer; font-size:1.1em; display:flex; align-items:center; justify-content:center;">&#10005;</button>
+  </div>
+  <!-- Scan Mode -->
+  <div class="settings-section">
+    <div class="settings-label">Scan Mode</div>
+    <select id="measure-mode">
+      <option value="2d">Standard Scan</option>
+      <option value="3d" selected>Detailed Scan (two heights)</option>
+    </select>
+  </div>
+  <!-- Alert Thresholds -->
+  <div class="settings-section">
+    <div class="settings-label">Alert Thresholds</div>
+    <div style="margin-top:6px;">
+      <label>Safe below</label>
+      <input type="number" step="any" id="thresh-safe" value="300" onchange="saveThresholds()">
+      <label>Warning below</label>
+      <input type="number" step="any" id="thresh-warn" value="600" onchange="saveThresholds()">
+    </div>
+  </div>
+  <!-- Robot Position (read-only) -->
+  <div class="settings-section">
+    <div class="settings-label">Robot Position</div>
+    <div class="settings-position">
+      X: <span id="val-x">--</span> &nbsp; Y: <span id="val-y">--</span> &nbsp; Heading: <span id="val-yaw">--</span>
+    </div>
+  </div>
+  <!-- Sensor Arm -->
+  <div class="settings-section" id="settings-gantry" style="display:none;">
+    <div class="settings-label">Sensor Arm</div>
+    <div class="gantry-vis">
+      <div class="gantry-bar-track">
+        <div class="gantry-bar-fill" id="gantry-bar-fill" style="height:0%"></div>
+      </div>
+      <div class="gantry-bar-info">
+        <div class="gantry-bar-pos" id="val-gantry">0mm</div>
+        <div class="gantry-bar-dir" id="gantry-dir"></div>
+      </div>
+    </div>
+    <button class="btn" style="margin-top:8px; padding:6px 16px; font-size:0.82em; background:var(--accent-dim); color:var(--text); border:1px solid var(--border);"
+            id="btn-gantry-home" onclick="gantryHome()">Home Sensor Arm</button>
+  </div>
+  <!-- Sensor connection -->
+  <div class="settings-section">
+    <div class="settings-label">Sensor Connection</div>
+    <div style="display:flex; align-items:center; gap:6px;">
+      <span class="conn-dot off" id="sensor-dot"></span>
+      <span id="sensor-conn-text" style="font-size:0.85em;">Disconnected</span>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -268,10 +607,142 @@ let waypoints = [];
 let latestState = null;
 let floorPlanImg = null;
 let mapCanvasReady = false;
+let mapViewport = null;
+let mapZoom = 1.0;        // interactive zoom level (1.0 = auto-fit)
+let mapPanX = 0;          // pan offset in image-pixel space
+let mapPanY = 0;
+let mapAutoViewport = null; // auto-computed viewport (waypoint-centered)
+let mapDragging = false;
+let mapDragStartX = 0, mapDragStartY = 0;
+let mapDragPanStartX = 0, mapDragPanStartY = 0;
+let displayAlign = null;
+let lastNavState = null;
 
-// ---- Thresholds (persisted in localStorage) ----
+function normalizeAngleRad(a) {
+  while (a > Math.PI) a -= 2 * Math.PI;
+  while (a < -Math.PI) a += 2 * Math.PI;
+  return a;
+}
+
+function resetDisplayAlignment() {
+  displayAlign = null;
+}
+
+function isAlignmentInitState(s) {
+  if (!s) return false;
+  if (!(s.nav_state === 'idle' || s.nav_state === 'standing_up')) return false;
+  if (!s.waypoint_statuses || s.waypoint_statuses.length === 0) return true;
+  return s.waypoint_statuses.every(st => st === 'pending');
+}
+
+function maybeInitDisplayAlignment(s) {
+  if (displayAlign) return;
+  if (!s || !s.position || !Array.isArray(waypoints) || waypoints.length === 0) return;
+  if (!isAlignmentInitState(s)) return;
+
+  const wp0 = waypoints[0];
+  if (!Number.isFinite(wp0.x) || !Number.isFinite(wp0.y)) return;
+
+  const startX = Number.isFinite(s.position.x) ? s.position.x : 0;
+  const startY = Number.isFinite(s.position.y) ? s.position.y : 0;
+  const startYaw = Number.isFinite(s.position.yaw) ? s.position.yaw : 0;
+  const baseYaw = Number.isFinite(wp0.yaw) ? wp0.yaw : startYaw;
+  const yawOffset = normalizeAngleRad(baseYaw - startYaw);
+
+  displayAlign = {
+    startX,
+    startY,
+    baseX: wp0.x,
+    baseY: wp0.y,
+    yawOffset,
+    cosA: Math.cos(yawOffset),
+    sinA: Math.sin(yawOffset),
+  };
+}
+
+function toDisplayPose(pose, stateForInit = null) {
+  if (!pose) return null;
+  if (!displayAlign && stateForInit) maybeInitDisplayAlignment(stateForInit);
+  if (!displayAlign) return pose;
+
+  const dx = pose.x - displayAlign.startX;
+  const dy = pose.y - displayAlign.startY;
+  return {
+    x: displayAlign.baseX + dx * displayAlign.cosA - dy * displayAlign.sinA,
+    y: displayAlign.baseY + dx * displayAlign.sinA + dy * displayAlign.cosA,
+    yaw: normalizeAngleRad(pose.yaw + displayAlign.yawOffset),
+  };
+}
+
+// ---- Settings Drawer ----
+function toggleSettings() {
+  const overlay = document.getElementById('settings-overlay');
+  const backdrop = document.getElementById('settings-backdrop');
+  const isOpen = overlay.classList.contains('open');
+  overlay.classList.toggle('open', !isOpen);
+  backdrop.classList.toggle('open', !isOpen);
+}
+
+// ---- Tab switching ----
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    if ((name === 'monitor' && b.textContent === 'Live Patrol') ||
+        (name === '3d' && b.textContent === '3D Map') ||
+        (name === 'heatmap' && b.textContent === 'Heat Map')) {
+      b.classList.add('active');
+    }
+  });
+  // Auto-check for existing 3D file when switching to tab
+  if (name === '3d') check3DExists();
+  // Load latest generated 2D heatmap when switching
+  if (name === 'heatmap') {
+    document.getElementById('heatmap-section').style.display = 'block';
+    check2DHeatmapExists();
+  }
+}
+
+// ---- Sensor Config ----
+let _sensorName = 'Sensor';
+let _sensorUnit = '';
+let _sensorPrecision = 1;
+let _sensorConfigApplied = false;
+
+function applySensorConfig(s) {
+  if (_sensorConfigApplied || !s.sensor_type) return;
+  _sensorConfigApplied = true;
+  _sensorName = s.sensor_type;
+  _sensorUnit = s.sensor_unit || '';
+  _sensorPrecision = (s.sensor_precision != null) ? s.sensor_precision : 1;
+  const label = _sensorUnit ? _sensorName + ' (' + _sensorUnit + ')' : _sensorName;
+  document.title = _sensorName + ' Patrol Monitor';
+  document.getElementById('page-title').textContent = _sensorName + ' Patrol Monitor';
+  document.getElementById('status-live-label').textContent = label;
+  document.getElementById('th-value').textContent = label;
+  document.getElementById('section-3d-title').textContent = '3D ' + _sensorName + ' Map';
+  document.getElementById('section-2d-title').textContent = '2D ' + _sensorName + ' Heat Map';
+  // Pick up measure_duration from server
+  if (s.measure_duration != null) {
+    MEASURE_DURATION = s.measure_duration;
+  }
+  // Apply server-provided threshold defaults if user hasn't customized for this sensor
+  if (s.sensor_defaults) {
+    const key = 'go2_thresholds_' + _sensorName.toLowerCase().replace(/\s+/g, '_');
+    if (!localStorage.getItem(key)) {
+      document.getElementById('thresh-safe').value = s.sensor_defaults.safe;
+      document.getElementById('thresh-warn').value = s.sensor_defaults.warn;
+    }
+  }
+}
+
+// ---- Thresholds ----
+function _thresholdKey() {
+  return 'go2_thresholds_' + _sensorName.toLowerCase().replace(/\s+/g, '_');
+}
 function loadThresholds() {
-  const saved = localStorage.getItem('go2_thresholds');
+  const saved = localStorage.getItem(_thresholdKey());
   if (saved) {
     try {
       const t = JSON.parse(saved);
@@ -283,8 +754,7 @@ function loadThresholds() {
 function saveThresholds() {
   const safe = parseFloat(document.getElementById('thresh-safe').value) || 300;
   const warn = parseFloat(document.getElementById('thresh-warn').value) || 600;
-  document.getElementById('thresh-danger').value = warn;
-  localStorage.setItem('go2_thresholds', JSON.stringify({safe, warn}));
+  localStorage.setItem(_thresholdKey(), JSON.stringify({safe, warn}));
 }
 function getThresholds() {
   return {
@@ -294,18 +764,15 @@ function getThresholds() {
 }
 loadThresholds();
 
-// ---- Init: fetch map data ----
+// ---- Init ----
 async function init() {
   try {
     const [metaResp, wpResp] = await Promise.all([
-      fetch('/api/map_meta'),
-      fetch('/api/waypoints'),
+      fetch('/api/map_meta'), fetch('/api/waypoints'),
     ]);
     if (metaResp.ok) mapMeta = await metaResp.json();
     if (wpResp.ok) waypoints = await wpResp.json();
-  } catch(e) {
-    console.warn('Failed to load map data:', e);
-  }
+  } catch(e) { console.warn('Failed to load map data:', e); }
   connectWebSocket();
 }
 
@@ -314,121 +781,446 @@ function connectWebSocket() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(`${proto}//${location.host}/ws`);
   ws.onopen = () => {
-    document.getElementById('status-badge').textContent = 'Connected';
-    document.getElementById('status-badge').style.background = '#27ae60';
+    document.getElementById('conn-dot').className = 'conn-dot on';
   };
   ws.onclose = () => {
-    document.getElementById('status-badge').textContent = 'Disconnected';
-    document.getElementById('status-badge').style.background = '#c0392b';
+    document.getElementById('conn-dot').className = 'conn-dot off';
     setTimeout(connectWebSocket, 2000);
   };
   ws.onmessage = (evt) => {
     const data = JSON.parse(evt.data);
-    if (data.type === 'state') {
-      latestState = data;
-      updateUI(data);
-    }
+    if (data.type === 'state') { latestState = data; updateUI(data); }
   };
 }
 
 function sendCmd(cmd) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({cmd}));
+}
+
+function startPatrol() {
+  const mode = document.getElementById('measure-mode').value;
   if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({cmd}));
+    ws.send(JSON.stringify({cmd: 'start', mode}));
   }
+  // Hide inline results from previous patrol
+  document.getElementById('inline-results').style.display = 'none';
 }
 
 // ---- UI Update ----
 function updateUI(s) {
-  // Status badge
-  const badge = document.getElementById('status-badge');
-  const stateLabels = {
-    idle: 'Idle', standing_up: 'Standing Up', navigating: 'Navigating',
-    collecting: 'Collecting', waiting: 'Waiting', done: 'Complete', error: 'Error',
-  };
-  const stateColors = {
-    idle: '#555', standing_up: '#f39c12', navigating: '#2980b9',
-    collecting: '#8e44ad', waiting: '#e67e22', done: '#27ae60', error: '#c0392b',
-  };
-  badge.textContent = stateLabels[s.nav_state] || s.nav_state;
-  badge.style.background = stateColors[s.nav_state] || '#555';
+  applySensorConfig(s);
+  if (lastNavState !== s.nav_state && s.nav_state === 'standing_up') {
+    resetDisplayAlignment();
+  }
+  maybeInitDisplayAlignment(s);
+  const displayPose = toDisplayPose(s.position, s) || s.position;
+  lastNavState = s.nav_state;
 
-  // Buttons
-  const isIdle = s.nav_state === 'idle' || s.nav_state === 'done' || s.nav_state === 'error';
-  document.getElementById('btn-start').disabled = !isIdle;
-  document.getElementById('btn-next').disabled = s.nav_state !== 'waiting';
-
-  // Position
-  document.getElementById('val-x').textContent = s.position.x.toFixed(3);
-  document.getElementById('val-y').textContent = s.position.y.toFixed(3);
-  document.getElementById('val-yaw').textContent = (s.position.yaw * 180 / Math.PI).toFixed(1) + '\u00b0';
-
-  // Sensor
-  const sensorDot = document.getElementById('sensor-dot');
-  sensorDot.className = 'conn-dot ' + (s.sensor_connected ? 'on' : 'off');
-  const sItem = document.getElementById('sensor-item');
-  const valSensor = document.getElementById('val-sensor');
-  if (s.sensor_value != null) {
-    valSensor.textContent = s.sensor_value.toFixed(1);
-    const t = getThresholds();
-    sItem.className = 'data-item ' + (
-      s.sensor_value < t.safe ? 'sensor-safe' :
-      s.sensor_value < t.warn ? 'sensor-warn' : 'sensor-danger'
-    );
-  } else {
-    valSensor.textContent = 'N/A';
-    sItem.className = 'data-item';
+  const isIdle = ['idle','done','error'].includes(s.nav_state);
+  const btnStart = document.getElementById('btn-start');
+  btnStart.disabled = !isIdle;
+  const modeSelect = document.getElementById('measure-mode');
+  modeSelect.disabled = !isIdle;
+  // Sync dropdown from server state (respects CLI --measure-mode)
+  if (s.measure_mode && isIdle) {
+    modeSelect.value = s.measure_mode;
   }
 
-  // Progress
+  // Disable "Detailed Scan" option when no gantry connected
+  const detailedOption = modeSelect.querySelector('option[value="3d"]');
+  if (!s.gantry) {
+    detailedOption.disabled = true;
+    detailedOption.textContent = 'Detailed Scan (no sensor arm)';
+    if (modeSelect.value === '3d') modeSelect.value = '2d';
+  } else {
+    detailedOption.disabled = false;
+    detailedOption.textContent = 'Detailed Scan (two heights)';
+  }
+
+  // Start button: hero size when idle, compact during patrol
+  if (isIdle && s.nav_state !== 'done') {
+    btnStart.classList.remove('compact');
+    btnStart.style.display = '';
+  } else if (s.nav_state === 'done' || s.nav_state === 'error') {
+    btnStart.classList.remove('compact');
+    btnStart.style.display = '';
+  } else {
+    btnStart.classList.add('compact');
+  }
+
+  // Show/hide Low/High phase toggles based on measure mode
+  const is3D = s.measure_mode === '3d';
+  document.getElementById('phase-toggle-3d').style.display = is3D ? 'inline' : 'none';
+  document.getElementById('phase-toggle-2d').style.display = is3D ? 'inline' : 'none';
+
+  // Continue button: only visible in waiting state
+  const btnNext = document.getElementById('btn-next');
+  btnNext.disabled = s.nav_state !== 'waiting';
+  btnNext.style.display = s.nav_state === 'waiting' ? '' : 'none';
+
+  // Robot position in settings drawer
+  document.getElementById('val-x').textContent = displayPose.x.toFixed(3);
+  document.getElementById('val-y').textContent = displayPose.y.toFixed(3);
+  document.getElementById('val-yaw').textContent = (displayPose.yaw * 180 / Math.PI).toFixed(1) + '\u00b0';
+
+  // Sensor connection in settings drawer
+  const sensorDot = document.getElementById('sensor-dot');
+  sensorDot.className = 'conn-dot ' + (s.sensor_connected ? 'on' : 'off');
+  document.getElementById('sensor-conn-text').textContent = s.sensor_connected ? 'Connected' : 'Disconnected';
+
+  // Live reading in status banner
+  const liveReading = document.getElementById('status-live-reading');
+  if (s.sensor_value != null) {
+    liveReading.textContent = s.sensor_value.toFixed(_sensorPrecision);
+    const t = getThresholds();
+    liveReading.className = 'status-live-reading ' + (s.sensor_value < t.safe ? 'reading-safe' : s.sensor_value < t.warn ? 'reading-warn' : 'reading-danger');
+  } else {
+    liveReading.textContent = '--';
+    liveReading.className = 'status-live-reading';
+  }
+
+  // Gantry in settings drawer
+  const settingsGantry = document.getElementById('settings-gantry');
+  const gantryBarFill = document.getElementById('gantry-bar-fill');
+  const gantryVal = document.getElementById('val-gantry');
+  const gantryDir = document.getElementById('gantry-dir');
+  const gantryHomeBtn = document.getElementById('btn-gantry-home');
+  if (s.gantry) {
+    settingsGantry.style.display = '';
+    const pos = s.gantry.current_position_mm || 0;
+    const target = s.gantry.last_target_mm;
+    const moving = s.gantry.moving;
+    const maxH = 1500;
+    const pct = Math.min(100, Math.max(0, (pos / maxH) * 100));
+    gantryBarFill.style.height = pct + '%';
+    gantryVal.textContent = pos.toFixed(0) + 'mm';
+    gantryVal.style.color = moving ? 'var(--yellow)' : 'var(--green)';
+    if (moving && target != null) {
+      gantryDir.textContent = target > pos ? '\u2191 Rising' : '\u2193 Lowering';
+      gantryDir.style.color = 'var(--yellow)';
+    } else {
+      gantryDir.textContent = pos < 2 ? 'Home' : 'Stopped';
+      gantryDir.style.color = 'var(--text-muted)';
+    }
+  } else {
+    settingsGantry.style.display = 'none';
+  }
+
   const total = s.total_waypoints || 0;
   const done = s.waypoint_statuses ? s.waypoint_statuses.filter(x => x === 'done').length : 0;
   const pct = total > 0 ? (done / total * 100) : 0;
   document.getElementById('progress-fill').style.width = pct + '%';
-  const progressText = document.getElementById('progress-text');
-  if (s.nav_state === 'idle') progressText.textContent = 'Waiting to start...';
-  else if (s.nav_state === 'done') progressText.textContent = `Complete! ${done}/${total} waypoints collected.`;
-  else if (s.nav_state === 'error') progressText.textContent = `Error: ${s.error}`;
-  else progressText.textContent = `Waypoint ${s.current_waypoint + 1} of ${total} (${done} collected)`;
+  const pt = document.getElementById('progress-text');
+  if (s.nav_state === 'idle') pt.textContent = 'Waiting to start...';
+  else if (s.nav_state === 'done') pt.textContent = `Complete! ${done}/${total} points.`;
+  else if (s.nav_state === 'error') pt.textContent = `Error: ${s.error}`;
+  else pt.textContent = `Point ${s.current_waypoint + 1} / ${total} (${done} done)`;
 
-  // Waypoint table
+  updateStatusBanner(s);
+  updateStepPipeline(s);
   updateWaypointTable(s);
-
-  // Map canvas
   if (mapCanvasReady) drawMap(s);
 
-  // Heatmap
-  if (s.nav_state === 'done' && s.sensor_log && s.sensor_log.length > 0) {
-    document.getElementById('heatmap-section').style.display = 'block';
-    drawHeatmap(s.sensor_log);
+  // Show inline results when patrol completes
+  if (s.nav_state === 'done' && lastNavState !== 'done') {
+    // Show inline results panel
+    const inlinePanel = document.getElementById('inline-results');
+    inlinePanel.style.display = '';
+
+    // Load 2D heatmap inline (poll until ready)
+    const heatmapImg = document.getElementById('inline-heatmap');
+    let heatmapPollCount = 0;
+    const pollHeatmap = setInterval(async () => {
+      heatmapPollCount++;
+      try {
+        const r = await fetch('/api/2d_status');
+        const d = await r.json();
+        if (d.status === 'ready') {
+          clearInterval(pollHeatmap);
+          heatmapImg.src = '/api/sensor_heatmap_2d?t=' + Date.now();
+          heatmapImg.style.display = '';
+        }
+      } catch(e) {}
+      if (heatmapPollCount >= 20) clearInterval(pollHeatmap);
+    }, 2000);
+
+    // Poll for 3D readiness and show link
+    const text3d = document.getElementById('inline-3d-text');
+    const link3d = document.getElementById('inline-3d-link');
+    text3d.textContent = 'Generating 3D map...';
+    link3d.style.display = 'none';
+    let pollCount = 0;
+    const pollViz = setInterval(async () => {
+      pollCount++;
+      try {
+        const r = await fetch('/api/3d_status');
+        const d = await r.json();
+        if (d.status === 'ready') {
+          clearInterval(pollViz);
+          text3d.innerHTML = '3D map ready! &nbsp; <code style="font-size:0.85em; background:#f0f0f0; padding:2px 8px; border-radius:4px;">sensor_monitor/data/sensor_3d_interactive.html</code>';
+          link3d.href = '/api/sensor_3d?t=' + Date.now();
+          link3d.style.display = 'inline-block';
+          load3DIframe();
+        } else if (d.status === 'error') {
+          clearInterval(pollViz);
+          text3d.textContent = '3D generation failed: ' + d.message;
+        }
+      } catch(e) {}
+      if (pollCount >= 20) clearInterval(pollViz);
+    }, 3000);
   }
+}
+
+// ---- Status Banner ----
+let collectStartTime = null;
+let lastBannerState = null;
+let MEASURE_DURATION = 5.0;
+
+function updateStatusBanner(s) {
+  const banner = document.getElementById('status-banner');
+  const icon = document.getElementById('status-icon');
+  const headline = document.getElementById('status-headline');
+  const subtext = document.getElementById('status-subtext');
+  const wpNum = (s.current_waypoint || 0) + 1;
+  const total = s.total_waypoints || 0;
+
+  // Track measurement countdown
+  if (s.nav_state !== lastBannerState) {
+    if (s.nav_state === 'collecting_low' || s.nav_state === 'collecting_high') {
+      collectStartTime = Date.now();
+    } else {
+      collectStartTime = null;
+    }
+    lastBannerState = s.nav_state;
+  }
+
+  let elapsed = collectStartTime ? (Date.now() - collectStartTime) / 1000 : 0;
+  let remaining = Math.max(0, MEASURE_DURATION - elapsed).toFixed(1);
+
+  const gantryPos = s.gantry ? (s.gantry.current_position_mm || 0).toFixed(0) : '0';
+  const gantryTarget = s.gantry && s.gantry.last_target_mm != null ? s.gantry.last_target_mm.toFixed(0) : '?';
+
+  // Determine done sub-state
+  let doneConfig;
+  if (s.nav_state === 'done') {
+    const t = getThresholds();
+    const logs = s.sensor_log || [];
+    let hasDanger = false, hasWarn = false, warnCount = 0;
+    for (const entry of logs) {
+      if (entry.sensor_value != null && entry.sensor_value !== '') {
+        const val = parseFloat(entry.sensor_value);
+        if (val >= t.warn) { hasDanger = true; }
+        else if (val >= t.safe) { hasWarn = true; warnCount++; }
+      }
+    }
+    // Count danger locations
+    let dangerCount = 0;
+    for (const entry of logs) {
+      if (entry.sensor_value != null && entry.sensor_value !== '') {
+        if (parseFloat(entry.sensor_value) >= t.warn) dangerCount++;
+      }
+    }
+    if (hasDanger) {
+      doneConfig = { icon:'\u26A0\uFE0F', headline:'ALERT \u2014 High readings detected', subtext:`${dangerCount} location(s) above danger threshold`, bg:'var(--danger-bg)', border:'var(--red)', pulse:true, pulseColor:'rgba(220,38,38,0.15)' };
+    } else if (hasWarn) {
+      doneConfig = { icon:'\u26A0\uFE0F', headline:'REVIEW NEEDED \u2014 Elevated readings at ' + warnCount + ' location(s)', subtext:'Some readings above safe threshold', bg:'var(--warn-bg)', border:'var(--yellow)', pulse:false, pulseColor:'' };
+    } else {
+      doneConfig = { icon:'\u2705', headline:'ALL CLEAR \u2014 No elevated readings', subtext:`All ${total} points within safe range`, bg:'var(--safe-bg)', border:'var(--green)', pulse:false, pulseColor:'' };
+    }
+  }
+
+  const config = {
+    idle:            { icon:'\u23F8',  headline:'Ready to Begin',                subtext:`Press Start Patrol to begin ${_sensorName.toLowerCase()} survey`, bg:'var(--bg-header)',  border:'var(--border)', pulse:false, pulseColor:'' },
+    standing_up:     { icon:'\uD83E\uDD16', headline:'Robot Preparing...',       subtext:'Standing up and initializing...',                      bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
+    navigating:      { icon:'\u27A1\uFE0F', headline:`Robot Moving to Point ${wpNum} of ${total}`, subtext:'Navigating to measurement location',  bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
+    collecting:      { icon:'\uD83D\uDCE1', headline:`Measuring ${_sensorName}...`, subtext:'Collecting sensor data...',                         bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
+    collecting_low:  { icon:'\uD83D\uDCE1', headline:`Measuring ${_sensorName}...`, subtext:`Ground level scan \u2014 ${remaining}s remaining`,  bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
+    gantry_raising:  { icon:'\u2B06\uFE0F', headline:'Raising Sensor Arm...',    subtext:`Moving to ${gantryTarget}mm (now at ${gantryPos}mm)`,  bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
+    collecting_high: { icon:'\uD83D\uDCE1', headline:'Measuring at Height...',   subtext:`Raised scan at ${gantryTarget}mm \u2014 ${remaining}s remaining`, bg:'var(--accent-dim)', border:'var(--accent)', pulse:true, pulseColor:'rgba(37,99,235,0.15)' },
+    waiting:         { icon:'\u270B',  headline:'Waiting for You \u2014 Press Continue Patrol', subtext:'Robot stopped at measurement point',      bg:'#fff7ed',           border:'var(--orange)', pulse:false, pulseColor:'' },
+    done:            doneConfig || { icon:'\u2705', headline:'Patrol Complete', subtext:`All ${total} points done`, bg:'var(--safe-bg)', border:'var(--green)', pulse:false, pulseColor:'' },
+    error:           { icon:'\u274C',  headline:'ERROR \u2014 Robot stopped',    subtext:s.error || 'Unknown error',                             bg:'var(--danger-bg)',  border:'var(--red)', pulse:false, pulseColor:'' },
+  };
+
+  const c = config[s.nav_state] || config.idle;
+  icon.textContent = c.icon;
+  headline.textContent = c.headline;
+  subtext.textContent = c.subtext;
+  banner.style.background = c.bg;
+  banner.style.borderBottom = '2px solid ' + c.border;
+  banner.style.setProperty('--pulse-color', c.pulseColor);
+  banner.classList.toggle('pulse', c.pulse);
+}
+
+function updateStepPipeline(s) {
+  const pipeline = document.getElementById('step-pipeline');
+  const hasGantry = s.gantry != null;
+  const isActive = !['idle', 'done', 'error'].includes(s.nav_state);
+
+  if (!isActive || !hasGantry) {
+    pipeline.style.display = 'none';
+    return;
+  }
+  pipeline.style.display = 'flex';
+
+  // Map nav_state to step index: nav=0, low=1, gantry=2, high=3, wait=4
+  const stateToStep = {
+    standing_up: -1, navigating: 0,
+    collecting_low: 1, gantry_raising: 2, collecting_high: 3, waiting: 4,
+  };
+  const currentStep = stateToStep[s.nav_state] ?? -1;
+
+  const steps = ['step-nav', 'step-low', 'step-gantry', 'step-high', 'step-wait'];
+  const lines = ['line-nav', 'line-low', 'line-gantry', 'line-high'];
+  const stepColors = ['var(--accent)', 'var(--yellow)', 'var(--purple)', 'var(--orange)', 'var(--orange)'];
+
+  steps.forEach((id, i) => {
+    const el = document.getElementById(id);
+    const dot = el.querySelector('.step-dot');
+    el.classList.remove('active', 'done');
+    dot.style.borderColor = '';
+    dot.style.background = '';
+    dot.style.color = '';
+
+    if (i < currentStep) {
+      el.classList.add('done');
+      dot.textContent = '\u2713';
+    } else if (i === currentStep) {
+      el.classList.add('active');
+      dot.style.borderColor = stepColors[i];
+      dot.style.background = stepColors[i];
+      dot.style.color = '#fff';
+      dot.textContent = (i + 1).toString();
+    } else {
+      dot.textContent = (i + 1).toString();
+    }
+  });
+
+  lines.forEach((id, i) => {
+    const el = document.getElementById(id);
+    el.classList.toggle('done', i < currentStep);
+  });
+}
+
+function formatSensorEntry(entry) {
+  if (!entry || entry.sensor_value === '' || entry.sensor_value == null) return '--';
+  const val = parseFloat(entry.sensor_value).toFixed(_sensorPrecision);
+  const std = entry.sensor_stddev != null && entry.sensor_stddev !== '' ? '\u00b1' + parseFloat(entry.sensor_stddev).toFixed(_sensorPrecision) : '';
+  return val + std;
+}
+
+function sensorCellClass(val) {
+  if (val == null) return '';
+  const t = getThresholds();
+  if (val < t.safe) return 'cell-safe';
+  if (val < t.warn) return 'cell-warn';
+  return 'cell-danger';
 }
 
 function updateWaypointTable(s) {
   const tbody = document.getElementById('wp-tbody');
   const total = s.total_waypoints || waypoints.length;
-  if (total === 0 && tbody.children.length === 0) {
-    // Build initial table from loaded waypoints
-    if (waypoints.length > 0) {
-      let html = '';
-      for (let i = 0; i < waypoints.length; i++) {
-        const wp = waypoints[i];
-        html += `<tr class="wp-pending"><td>${i+1}</td><td>(${wp.x.toFixed(2)}, ${wp.y.toFixed(2)})</td><td>--</td><td>pending</td></tr>`;
+  const t = getThresholds();
+
+  // Toggle table columns based on measure mode
+  const is3DMode = s.measure_mode === '3d';
+  document.getElementById('th-low').style.display = is3DMode ? '' : 'none';
+  document.getElementById('th-high').style.display = is3DMode ? '' : 'none';
+  document.getElementById('th-delta').style.display = is3DMode ? '' : 'none';
+  document.getElementById('th-value').style.display = is3DMode ? 'none' : '';
+
+  if (total === 0 && tbody.children.length === 0 && waypoints.length > 0) {
+    let html = '';
+    for (let i = 0; i < waypoints.length; i++) {
+      const wp = waypoints[i];
+      if (is3DMode) {
+        html += `<tr class="wp-pending"><td>${i+1}</td><td class="col-position">(${wp.x.toFixed(2)}, ${wp.y.toFixed(2)})</td><td>--</td><td>--</td><td></td><td>pending</td></tr>`;
+      } else {
+        html += `<tr class="wp-pending"><td>${i+1}</td><td class="col-position">(${wp.x.toFixed(2)}, ${wp.y.toFixed(2)})</td><td>--</td><td>pending</td></tr>`;
       }
-      tbody.innerHTML = html;
     }
+    tbody.innerHTML = html;
     return;
   }
 
-  // Rebuild from state
   let html = '';
+  let allValues = [];
+  let maxVal = -Infinity, maxWp = 0;
+  let safeCount = 0, warnCount = 0, dangerCount = 0;
+
+  // First pass: collect data
+  const rowData = [];
   for (let i = 0; i < total; i++) {
     const status = (s.waypoint_statuses && s.waypoint_statuses[i]) || 'pending';
-    const wp = waypoints[i] || {x: 0, y: 0};
-    const logEntry = s.sensor_log ? s.sensor_log.find(e => e.waypoint === i + 1) : null;
-    const sensorVal = logEntry && logEntry.sensor_value !== '' ? parseFloat(logEntry.sensor_value).toFixed(1) : '--';
-    html += `<tr class="wp-${status}"><td>${i+1}</td><td>(${wp.x.toFixed(2)}, ${wp.y.toFixed(2)})</td><td>${sensorVal}</td><td>${status}</td></tr>`;
+    const wp = waypoints[i] || {x:0, y:0};
+    const logs = s.sensor_log ? s.sensor_log.filter(e => e.waypoint === i + 1) : [];
+    const lowEntry = logs.find(e => e.measurement_phase === 'low' || e.measurement_phase === 'mid');
+    const highEntry = logs.find(e => e.measurement_phase === 'high' || e.measurement_phase === 'elevated');
+    const elevatedEntry = highEntry;
+    const fallbackEntry = logs.length > 0 && !lowEntry && !highEntry && !elevatedEntry ? logs[0] : null;
+    const primary = lowEntry || elevatedEntry || fallbackEntry;
+    const lowVal = primary && primary.sensor_value !== '' ? parseFloat(primary.sensor_value) : null;
+    const highVal = highEntry && highEntry.sensor_value !== '' ? parseFloat(highEntry.sensor_value) : null;
+
+    if (lowVal != null) {
+      allValues.push(lowVal);
+      if (lowVal > maxVal) { maxVal = lowVal; maxWp = i + 1; }
+      if (lowVal < t.safe) safeCount++;
+      else if (lowVal < t.warn) warnCount++;
+      else dangerCount++;
+    }
+    if (highVal != null) allValues.push(highVal);
+
+    rowData.push({ i, status, wp, primary, lowEntry: lowEntry || fallbackEntry, highEntry, elevatedEntry, lowVal, highVal });
+  }
+
+  // Build rows
+  for (const r of rowData) {
+    const lowStr = formatSensorEntry(r.lowEntry);
+    const highStr = formatSensorEntry(r.highEntry);
+    const lowClass = sensorCellClass(r.lowVal);
+    const highClass = sensorCellClass(r.highVal);
+    const isMax = r.lowVal != null && r.lowVal === maxVal;
+
+    let deltaStr = '';
+    if (r.lowVal != null && r.highVal != null) {
+      const delta = r.highVal - r.lowVal;
+      const arrow = delta > 0 ? '\u2191' : delta < 0 ? '\u2193' : '=';
+      deltaStr = `${arrow}${Math.abs(delta).toFixed(_sensorPrecision)}`;
+    }
+
+    html += `<tr class="wp-${r.status}${isMax ? ' wp-max-reading' : ''}">`;
+    html += `<td>${r.i+1}</td>`;
+    html += `<td class="col-position">(${r.wp.x.toFixed(2)}, ${r.wp.y.toFixed(2)})</td>`;
+    if (is3DMode) {
+      html += `<td class="${lowClass}">${lowStr}</td>`;
+      html += `<td class="${highClass}">${highStr}</td>`;
+      html += `<td class="cell-delta">${deltaStr}</td>`;
+    } else {
+      // 2D mode: single Value column (elevated or fallback)
+      const valEntry = r.elevatedEntry || r.primary;
+      const valStr = formatSensorEntry(valEntry);
+      const valNum = valEntry && valEntry.sensor_value !== '' ? parseFloat(valEntry.sensor_value) : null;
+      const valClass = sensorCellClass(valNum);
+      html += `<td class="${valClass}">${valStr}</td>`;
+    }
+    html += `<td>${r.status}</td></tr>`;
   }
   tbody.innerHTML = html;
+
+  // Update summary bar
+  const summary = document.getElementById('patrol-summary');
+  if (allValues.length > 0) {
+    summary.style.display = 'flex';
+    document.getElementById('sum-safe').textContent = safeCount + ' Safe';
+    document.getElementById('sum-warn').textContent = warnCount + ' Warning';
+    document.getElementById('sum-danger').textContent = dangerCount + ' Danger';
+    const avg = allValues.reduce((a,b) => a+b, 0) / allValues.length;
+    document.getElementById('sum-avg').textContent = avg.toFixed(_sensorPrecision);
+    document.getElementById('sum-max').textContent = maxVal.toFixed(_sensorPrecision) + ' (Point ' + maxWp + ')';
+  } else {
+    summary.style.display = 'none';
+  }
 }
 
 // ---- Map Canvas ----
@@ -439,119 +1231,480 @@ function initMapCanvas() {
   canvas.width = img.naturalWidth;
   canvas.height = img.naturalHeight;
   document.getElementById('map-no-data').style.display = 'none';
+
+  // Compute auto-fit viewport (centered on waypoints)
+  mapAutoViewport = null;
+  if (waypoints.length > 0 && mapMeta) {
+    let sumX = 0, sumY = 0;
+    for (const wp of waypoints) {
+      sumX += ((wp.x - mapMeta.origin_x) / mapMeta.resolution / mapMeta.width) * img.naturalWidth;
+      sumY += ((mapMeta.height - 1 - (wp.y - mapMeta.origin_y) / mapMeta.resolution) / mapMeta.height) * img.naturalHeight;
+    }
+    const cx = sumX / waypoints.length, cy = sumY / waypoints.length;
+    const sw = img.naturalWidth * 0.8, sh = img.naturalHeight * 0.8;
+    let sx = Math.max(0, Math.min(cx - sw/2, img.naturalWidth - sw));
+    let sy = Math.max(0, Math.min(cy - sh/2, img.naturalHeight - sh));
+    mapAutoViewport = {cx, cy, sw, sh, sx, sy};
+  }
+  mapZoom = 1.0; mapPanX = 0; mapPanY = 0;
+  updateMapViewport();
+
+  // Setup interactive events (once)
+  if (!canvas._eventsAttached) {
+    canvas._eventsAttached = true;
+    canvas.addEventListener('wheel', onMapWheel, {passive: false});
+    canvas.addEventListener('mousedown', onMapMouseDown);
+    canvas.addEventListener('mousemove', onMapMouseMove);
+    canvas.addEventListener('mouseup', onMapMouseUp);
+    canvas.addEventListener('mouseleave', onMapMouseUp);
+    canvas.addEventListener('dblclick', onMapDblClick);
+    // Touch support
+    canvas.addEventListener('touchstart', onMapTouchStart, {passive: false});
+    canvas.addEventListener('touchmove', onMapTouchMove, {passive: false});
+    canvas.addEventListener('touchend', onMapTouchEnd);
+  }
+
   mapCanvasReady = true;
   if (latestState) drawMap(latestState);
 }
 
-function worldToCanvas(wx, wy, canvas) {
-  if (!mapMeta) return null;
-  // map_meta gives us the grid coordinate system
-  // floor_plan.png is rendered by matplotlib with origin='lower' convention
-  // The PNG image has matplotlib axes/labels, so we use the grid dimensions
-  // We need to map world coords to the image pixel space
+function updateMapViewport() {
+  if (!floorPlanImg) return;
   const img = floorPlanImg;
-  if (!img) return null;
+  if (mapAutoViewport) {
+    const baseSW = mapAutoViewport.sw / mapZoom;
+    const baseSH = mapAutoViewport.sh / mapZoom;
+    const cx = mapAutoViewport.cx + mapPanX;
+    const cy = mapAutoViewport.cy + mapPanY;
+    let sx = cx - baseSW / 2;
+    let sy = cy - baseSH / 2;
+    // Clamp to image bounds
+    sx = Math.max(0, Math.min(sx, img.naturalWidth - baseSW));
+    sy = Math.max(0, Math.min(sy, img.naturalHeight - baseSH));
+    mapViewport = {sx, sy, sw: baseSW, sh: baseSH};
+  } else {
+    // No waypoints: zoom on full image
+    const baseSW = img.naturalWidth / mapZoom;
+    const baseSH = img.naturalHeight / mapZoom;
+    const cx = img.naturalWidth / 2 + mapPanX;
+    const cy = img.naturalHeight / 2 + mapPanY;
+    let sx = cx - baseSW / 2;
+    let sy = cy - baseSH / 2;
+    sx = Math.max(0, Math.min(sx, img.naturalWidth - baseSW));
+    sy = Math.max(0, Math.min(sy, img.naturalHeight - baseSH));
+    mapViewport = {sx, sy, sw: baseSW, sh: baseSH};
+  }
+}
 
-  // Grid pixel coords
+function canvasToImage(canvasX, canvasY) {
+  const canvas = document.getElementById('map-canvas');
+  if (!mapViewport || !canvas) return {ix: canvasX, iy: canvasY};
+  return {
+    ix: mapViewport.sx + (canvasX / canvas.width) * mapViewport.sw,
+    iy: mapViewport.sy + (canvasY / canvas.height) * mapViewport.sh
+  };
+}
+
+function getCanvasCoords(e) {
+  const canvas = document.getElementById('map-canvas');
+  const rect = canvas.getBoundingClientRect();
+  return {
+    cx: (e.clientX - rect.left) * (canvas.width / rect.width),
+    cy: (e.clientY - rect.top) * (canvas.height / rect.height)
+  };
+}
+
+function onMapWheel(e) {
+  e.preventDefault();
+  const {cx, cy} = getCanvasCoords(e);
+  const imgBefore = canvasToImage(cx, cy);
+  const factor = e.deltaY < 0 ? 1.25 : 0.8;
+  mapZoom = Math.max(0.5, Math.min(8.0, mapZoom * factor));
+  updateMapViewport();
+  // Adjust pan so the point under cursor stays fixed
+  const imgAfter = canvasToImage(cx, cy);
+  mapPanX += (imgBefore.ix - imgAfter.ix);
+  mapPanY += (imgBefore.iy - imgAfter.iy);
+  updateMapViewport();
+  if (latestState) drawMap(latestState);
+}
+
+function onMapMouseDown(e) {
+  mapDragging = true;
+  mapDragStartX = e.clientX; mapDragStartY = e.clientY;
+  mapDragPanStartX = mapPanX; mapDragPanStartY = mapPanY;
+  e.target.classList.add('dragging');
+}
+
+function onMapMouseMove(e) {
+  if (!mapDragging) return;
+  const canvas = document.getElementById('map-canvas');
+  const rect = canvas.getBoundingClientRect();
+  // Convert pixel drag to image-space pan
+  const scaleX = (mapViewport ? mapViewport.sw : floorPlanImg.naturalWidth) / rect.width;
+  const scaleY = (mapViewport ? mapViewport.sh : floorPlanImg.naturalHeight) / rect.height;
+  mapPanX = mapDragPanStartX - (e.clientX - mapDragStartX) * scaleX;
+  mapPanY = mapDragPanStartY - (e.clientY - mapDragStartY) * scaleY;
+  updateMapViewport();
+  if (latestState) drawMap(latestState);
+}
+
+function onMapMouseUp(e) {
+  if (mapDragging) {
+    mapDragging = false;
+    document.getElementById('map-canvas').classList.remove('dragging');
+  }
+}
+
+function onMapDblClick(e) {
+  const {cx, cy} = getCanvasCoords(e);
+  const imgPt = canvasToImage(cx, cy);
+  const base = mapAutoViewport || {cx: floorPlanImg.naturalWidth/2, cy: floorPlanImg.naturalHeight/2};
+  mapPanX = imgPt.ix - base.cx;
+  mapPanY = imgPt.iy - base.cy;
+  mapZoom = Math.min(8.0, mapZoom * 2);
+  updateMapViewport();
+  if (latestState) drawMap(latestState);
+}
+
+// Touch support
+let mapTouchStartDist = 0;
+let mapTouchStartZoom = 1;
+function onMapTouchStart(e) {
+  if (e.touches.length === 1) {
+    e.preventDefault();
+    mapDragging = true;
+    mapDragStartX = e.touches[0].clientX; mapDragStartY = e.touches[0].clientY;
+    mapDragPanStartX = mapPanX; mapDragPanStartY = mapPanY;
+  } else if (e.touches.length === 2) {
+    e.preventDefault();
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    mapTouchStartDist = Math.sqrt(dx*dx + dy*dy);
+    mapTouchStartZoom = mapZoom;
+  }
+}
+function onMapTouchMove(e) {
+  if (e.touches.length === 1 && mapDragging) {
+    e.preventDefault();
+    const canvas = document.getElementById('map-canvas');
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = (mapViewport ? mapViewport.sw : floorPlanImg.naturalWidth) / rect.width;
+    const scaleY = (mapViewport ? mapViewport.sh : floorPlanImg.naturalHeight) / rect.height;
+    mapPanX = mapDragPanStartX - (e.touches[0].clientX - mapDragStartX) * scaleX;
+    mapPanY = mapDragPanStartY - (e.touches[0].clientY - mapDragStartY) * scaleY;
+    updateMapViewport();
+    if (latestState) drawMap(latestState);
+  } else if (e.touches.length === 2) {
+    e.preventDefault();
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    mapZoom = Math.max(0.5, Math.min(8.0, mapTouchStartZoom * (dist / mapTouchStartDist)));
+    updateMapViewport();
+    if (latestState) drawMap(latestState);
+  }
+}
+function onMapTouchEnd(e) { mapDragging = false; }
+
+function mapZoomBtn(factor) {
+  mapZoom = Math.max(0.5, Math.min(8.0, mapZoom * factor));
+  updateMapViewport();
+  if (latestState) drawMap(latestState);
+}
+
+function mapZoomReset() {
+  mapZoom = 1.0; mapPanX = 0; mapPanY = 0;
+  updateMapViewport();
+  if (latestState) drawMap(latestState);
+}
+
+function worldToCanvas(wx, wy, canvas) {
+  if (!mapMeta || !floorPlanImg) return null;
+  const img = floorPlanImg;
   const gx = (wx - mapMeta.origin_x) / mapMeta.resolution;
   const gy = (wy - mapMeta.origin_y) / mapMeta.resolution;
-  // Flip Y (grid origin='lower' = bottom-left, canvas origin = top-left)
-  const gyFlipped = mapMeta.height - 1 - gy;
-
-  // The matplotlib PNG has padding for axes. We approximate the plot area.
-  // matplotlib default: left~12.5%, right~95%, bottom~10%, top~93% of figure
-  const plotLeft = 0.125 * img.naturalWidth;
-  const plotRight = 0.95 * img.naturalWidth;
-  const plotTop = 0.07 * img.naturalHeight;
-  const plotBottom = 0.90 * img.naturalHeight;
-  const plotW = plotRight - plotLeft;
-  const plotH = plotBottom - plotTop;
-
-  const cx = plotLeft + (gx / mapMeta.width) * plotW;
-  const cy = plotTop + (gyFlipped / mapMeta.height) * plotH;
-  return {x: cx, y: cy};
+  const gyF = mapMeta.height - 1 - gy;
+  const imgX = (gx / mapMeta.width) * img.naturalWidth;
+  const imgY = (gyF / mapMeta.height) * img.naturalHeight;
+  if (mapViewport) {
+    return { x: ((imgX - mapViewport.sx) / mapViewport.sw) * canvas.width,
+             y: ((imgY - mapViewport.sy) / mapViewport.sh) * canvas.height };
+  }
+  return { x: imgX * (canvas.width / img.naturalWidth), y: imgY * (canvas.height / img.naturalHeight) };
 }
 
 function drawMap(s) {
   const canvas = document.getElementById('map-canvas');
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-
+  if (floorPlanImg && floorPlanImg.naturalWidth > 0) {
+    if (mapViewport) ctx.drawImage(floorPlanImg, mapViewport.sx, mapViewport.sy, mapViewport.sw, mapViewport.sh, 0, 0, canvas.width, canvas.height);
+    else ctx.drawImage(floorPlanImg, 0, 0, canvas.width, canvas.height);
+  }
   if (!mapMeta) return;
 
-  // Draw waypoint route path
+  // Route path (darker blue for light theme)
   if (waypoints.length > 1) {
-    ctx.beginPath();
-    ctx.strokeStyle = 'rgba(52, 152, 219, 0.5)';
-    ctx.lineWidth = 2;
-    for (let i = 0; i < waypoints.length; i++) {
-      const p = worldToCanvas(waypoints[i].x, waypoints[i].y, canvas);
-      if (!p) continue;
-      if (i === 0) ctx.moveTo(p.x, p.y);
-      else ctx.lineTo(p.x, p.y);
-    }
+    ctx.beginPath(); ctx.strokeStyle = 'rgba(37,99,235,0.5)'; ctx.lineWidth = 2;
+    waypoints.forEach((wp, i) => { const p = worldToCanvas(wp.x, wp.y, canvas); if (!p) return; i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y); });
     ctx.stroke();
   }
 
-  // Draw waypoint markers
-  for (let i = 0; i < waypoints.length; i++) {
-    const wp = waypoints[i];
-    const p = worldToCanvas(wp.x, wp.y, canvas);
-    if (!p) continue;
-
+  // Waypoint markers
+  const thresh = getThresholds();
+  waypoints.forEach((wp, i) => {
+    const p = worldToCanvas(wp.x, wp.y, canvas); if (!p) return;
     const status = (s.waypoint_statuses && s.waypoint_statuses[i]) || 'pending';
-    const colors = {
-      pending: '#777', navigating: '#3498db', collecting: '#9b59b6',
-      waiting: '#e67e22', done: '#2ecc71',
-    };
+    const statusColors = { pending:'#b0b0b0', navigating:'#2563eb', collecting:'#7c3aed', collecting_low:'#ca8a04', gantry_raising:'#7c3aed', collecting_high:'#ea580c', waiting:'#ea580c', done:'#16a34a' };
 
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 8, 0, 2 * Math.PI);
-    ctx.fillStyle = colors[status] || '#777';
-    ctx.fill();
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
+    // Get sensor readings for this waypoint
+    const logs = s.sensor_log ? s.sensor_log.filter(e => e.waypoint === i + 1) : [];
+    const lowEntry = logs.find(e => e.measurement_phase === 'low' || e.measurement_phase === 'mid');
+    const highEntry = logs.find(e => e.measurement_phase === 'high' || e.measurement_phase === 'elevated');
+    const elevatedEntry = highEntry;
+    const fallback = logs.length > 0 && !lowEntry && !highEntry && !elevatedEntry ? logs[0] : null;
+    const primaryEntry = lowEntry || elevatedEntry || fallback;
+    const primaryVal = primaryEntry && primaryEntry.sensor_value !== '' ? parseFloat(primaryEntry.sensor_value) : null;
+    const highVal = highEntry && highEntry.sensor_value !== '' ? parseFloat(highEntry.sensor_value) : null;
 
-    // Number label
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 9px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(i + 1, p.x, p.y);
-  }
+    if (status === 'done' && primaryVal != null) {
+      // Completed waypoint: draw threshold-colored marker with value
+      const sensorColor = primaryVal < thresh.safe ? '#16a34a' : primaryVal < thresh.warn ? '#ca8a04' : '#dc2626';
+      const radius = Math.max(10, Math.min(18, 8 + (primaryVal / (thresh.warn || 600)) * 8));
 
-  // Draw robot position
-  const rp = worldToCanvas(s.position.x, s.position.y, canvas);
+      // Outer ring for high reading (if available)
+      if (highVal != null) {
+        const highColor = highVal < thresh.safe ? '#16a34a' : highVal < thresh.warn ? '#ca8a04' : '#dc2626';
+        ctx.beginPath(); ctx.arc(p.x, p.y, radius + 4, 0, 2*Math.PI);
+        ctx.strokeStyle = highColor; ctx.lineWidth = 3; ctx.stroke();
+      }
+
+      // Main circle
+      ctx.beginPath(); ctx.arc(p.x, p.y, radius, 0, 2*Math.PI);
+      ctx.fillStyle = sensorColor; ctx.globalAlpha = 0.85; ctx.fill(); ctx.globalAlpha = 1.0;
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+
+      // Waypoint number
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(i + 1, p.x, p.y);
+
+      // Sensor values intentionally not shown on map to keep route readable
+    } else {
+      // Pending / in-progress: simple colored dot
+      ctx.beginPath(); ctx.arc(p.x, p.y, 8, 0, 2*Math.PI);
+      ctx.fillStyle = statusColors[status] || '#b0b0b0'; ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(i + 1, p.x, p.y);
+    }
+  });
+
+  // Robot
+  const displayPose = toDisplayPose(s.position, s) || s.position;
+  const rp = worldToCanvas(displayPose.x, displayPose.y, canvas);
   if (rp) {
-    const yaw = s.position.yaw;
-    const size = 12;
-    ctx.save();
-    ctx.translate(rp.x, rp.y);
-    // Note: canvas Y is flipped relative to world Y, so negate yaw for display
-    ctx.rotate(-yaw);
-    ctx.beginPath();
-    ctx.moveTo(size, 0);
-    ctx.lineTo(-size * 0.6, -size * 0.5);
-    ctx.lineTo(-size * 0.6, size * 0.5);
-    ctx.closePath();
-
-    const robotColors = {
-      idle: '#95a5a6', navigating: '#2ecc71', collecting: '#f39c12',
-      waiting: '#e67e22', done: '#27ae60', error: '#e74c3c', standing_up: '#f39c12',
-    };
-    ctx.fillStyle = robotColors[s.nav_state] || '#2ecc71';
-    ctx.fill();
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.restore();
+    ctx.save(); ctx.translate(rp.x, rp.y); ctx.rotate(-displayPose.yaw);
+    ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(-7, -6); ctx.lineTo(-7, 6); ctx.closePath();
+    const rc = { idle:'#888', navigating:'#16a34a', collecting:'#ca8a04', collecting_low:'#ca8a04', gantry_raising:'#7c3aed', collecting_high:'#ea580c', waiting:'#ea580c', done:'#16a34a', error:'#dc2626', standing_up:'#ca8a04' };
+    ctx.fillStyle = rc[s.nav_state] || '#16a34a'; ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke(); ctx.restore();
   }
 }
 
-// ---- Heatmap ----
+// ---- Altitude phase toggle ----
+let current3DPhase = 'low';
+let current2DPhase = 'low';
+
+function set3DPhase(phase) {
+  current3DPhase = phase;
+  document.getElementById('btn-3d-low').style.opacity = phase === 'low' ? '1' : '0.5';
+  document.getElementById('btn-3d-high').style.opacity = phase === 'high' ? '1' : '0.5';
+  load3DIframe();
+}
+
+function set2DPhase(phase) {
+  current2DPhase = phase;
+  document.getElementById('btn-2d-low').style.opacity = phase === 'low' ? '1' : '0.5';
+  document.getElementById('btn-2d-high').style.opacity = phase === 'high' ? '1' : '0.5';
+  load2DHeatmapImage();
+}
+
+// ---- 3D Generation ----
+let gen3dPolling = null;
+
+async function check3DExists() {
+  try {
+    const r = await fetch('/api/3d_status');
+    const d = await r.json();
+    if (d.status === 'ready') { load3DIframe(); return; }
+  } catch(e) {}
+  // Also try loading directly
+  try {
+    const r2 = await fetch('/api/sensor_3d?phase=' + current3DPhase);
+    if (r2.ok) load3DIframe();
+  } catch(e) {}
+}
+
+function load3DIframe() {
+  const link = document.getElementById('3d-open-link');
+  link.href = '/api/sensor_3d?t=' + Date.now();
+  document.getElementById('3d-link-container').style.display = 'block';
+  document.getElementById('iframe-placeholder').style.display = 'none';
+}
+
+async function generate3D() {
+  const btn = document.getElementById('btn-gen3d');
+  const status = document.getElementById('gen3d-status');
+  const spinner = document.getElementById('gen-spinner');
+  const text = document.getElementById('placeholder-text');
+
+  btn.disabled = true;
+  status.textContent = 'Generating...';
+  spinner.style.display = 'block';
+  text.textContent = 'Building 3D visualization...';
+
+  try {
+    const resp = await fetch('/api/generate_3d', {method: 'POST'});
+    const data = await resp.json();
+    if (data.status === 'already_running') {
+      status.textContent = 'Already generating...';
+      return;
+    }
+  } catch(e) {
+    status.textContent = 'Request failed';
+    btn.disabled = false;
+    spinner.style.display = 'none';
+    return;
+  }
+
+  // Poll for completion
+  if (gen3dPolling) clearInterval(gen3dPolling);
+  gen3dPolling = setInterval(async () => {
+    try {
+      const r = await fetch('/api/3d_status');
+      const d = await r.json();
+      if (d.status === 'ready') {
+        clearInterval(gen3dPolling);
+        gen3dPolling = null;
+        status.textContent = 'Ready';
+        btn.disabled = false;
+        spinner.style.display = 'none';
+        load3DIframe();
+      } else if (d.status === 'error') {
+        clearInterval(gen3dPolling);
+        gen3dPolling = null;
+        status.textContent = 'Error: ' + d.message;
+        btn.disabled = false;
+        spinner.style.display = 'none';
+        text.textContent = 'Generation failed. Check server logs.';
+      }
+    } catch(e) {}
+  }, 1500);
+}
+
+// ---- 2D Heatmap ----
 let heatmapCanvasReady = false;
 let heatmapFloorImg = null;
+let gen2dPolling = null;
+
+function clearHeatmapCanvas() {
+  if (!heatmapCanvasReady) return;
+  const canvas = document.getElementById('heatmap-canvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+function load2DHeatmapImage() {
+  const img = document.getElementById('heatmap-img');
+  const canvas = document.getElementById('heatmap-canvas');
+  canvas.style.display = 'none';
+  const mode = latestState && latestState.measure_mode;
+  const phase = mode === '3d' ? current2DPhase : '';
+  img.src = '/api/sensor_heatmap_2d' + (phase ? '?phase=' + phase + '&' : '?') + 't=' + Date.now();
+  document.getElementById('heatmap-empty').style.display = 'none';
+  document.getElementById('heatmap-section').style.display = 'block';
+}
+
+async function check2DHeatmapExists() {
+  try {
+    const r = await fetch('/api/2d_status');
+    if (r.ok) {
+      const d = await r.json();
+      if (d.status === 'ready') {
+        load2DHeatmapImage();
+        return;
+      }
+    }
+    const r2 = await fetch('/api/sensor_heatmap_2d', {method: 'HEAD'});
+    if (r2.ok) {
+      load2DHeatmapImage();
+      return;
+    }
+  } catch (e) {}
+
+  const canvas = document.getElementById('heatmap-canvas');
+  canvas.style.display = 'none';
+  clearHeatmapCanvas();
+  document.getElementById('heatmap-empty').style.display = 'block';
+}
+
+function stop2DStatusPolling() {
+  if (gen2dPolling) {
+    clearInterval(gen2dPolling);
+    gen2dPolling = null;
+  }
+}
+
+async function generate2DHeatmap() {
+  const btn = document.getElementById('btn-gen2d');
+  const status = document.getElementById('gen2d-status');
+  const empty = document.getElementById('heatmap-empty');
+
+  btn.disabled = true;
+  status.textContent = 'Generating...';
+  empty.style.display = 'none';
+
+  try {
+    const resp = await fetch('/api/generate_2d', {method: 'POST'});
+    if (!resp.ok) {
+      throw new Error('generate_2d failed (' + resp.status + ')');
+    }
+    const data = await resp.json();
+    if (data.status === 'already_running') {
+      status.textContent = 'Already generating...';
+    }
+  } catch (e) {
+    status.textContent = 'Request failed';
+    console.warn('Generate 2D heatmap request failed:', e);
+    btn.disabled = false;
+    return;
+  }
+
+  stop2DStatusPolling();
+  gen2dPolling = setInterval(async () => {
+    try {
+      const r = await fetch('/api/2d_status');
+      const d = await r.json();
+      if (d.status === 'ready') {
+        stop2DStatusPolling();
+        load2DHeatmapImage();
+        status.textContent = 'Ready';
+        btn.disabled = false;
+      } else if (d.status === 'error') {
+        stop2DStatusPolling();
+        status.textContent = 'Error: ' + d.message;
+        empty.style.display = 'block';
+        btn.disabled = false;
+      }
+    } catch (e) {
+      stop2DStatusPolling();
+      status.textContent = 'Generate failed';
+      empty.style.display = 'block';
+      btn.disabled = false;
+    }
+  }, 1200);
+}
 
 function initHeatmapCanvas() {
   const img = document.getElementById('heatmap-img');
@@ -560,110 +1713,17 @@ function initHeatmapCanvas() {
   canvas.width = img.naturalWidth;
   canvas.height = img.naturalHeight;
   heatmapCanvasReady = true;
-  if (latestState && latestState.sensor_log) drawHeatmap(latestState.sensor_log);
+  canvas.style.display = 'none';
 }
 
-function sensorToColor(value, vmin, vmax) {
-  let t = (vmax === vmin) ? 0.5 : (value - vmin) / (vmax - vmin);
-  t = Math.max(0, Math.min(1, t));
-  const thresh = getThresholds();
-  const tSafe = (vmax === vmin) ? 0.33 : (thresh.safe - vmin) / (vmax - vmin);
-  const tWarn = (vmax === vmin) ? 0.66 : (thresh.warn - vmin) / (vmax - vmin);
-
-  // Green -> Yellow -> Red
-  let r, g, b;
-  if (t < 0.5) {
-    r = Math.round(t * 2 * 255);
-    g = Math.round(255 - t * 0.5 * 255);
-    b = Math.round((1 - t * 2) * 100);
-  } else {
-    r = 255;
-    g = Math.round((1 - (t - 0.5) * 2) * 200);
-    b = 0;
-  }
-  return `rgb(${r},${g},${b})`;
+// ---- Gantry ----
+async function gantryHome() {
+  try {
+    await fetch('/api/gantry/home', {method: 'POST'});
+  } catch(e) { console.warn('Gantry home failed:', e); }
 }
 
-function drawHeatmap(sensorLog) {
-  if (!heatmapCanvasReady || !mapMeta) return;
-  const canvas = document.getElementById('heatmap-canvas');
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  const values = sensorLog.filter(e => e.sensor_value !== '').map(e => parseFloat(e.sensor_value));
-  if (values.length === 0) return;
-  const vmin = Math.min(...values);
-  const vmax = Math.max(...values);
-
-  // Draw route path
-  if (waypoints.length > 1) {
-    ctx.beginPath();
-    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-    ctx.lineWidth = 2;
-    ctx.setLineDash([6, 4]);
-    for (let i = 0; i < waypoints.length; i++) {
-      const p = heatmapWorldToCanvas(waypoints[i].x, waypoints[i].y);
-      if (!p) continue;
-      if (i === 0) ctx.moveTo(p.x, p.y);
-      else ctx.lineTo(p.x, p.y);
-    }
-    ctx.stroke();
-    ctx.setLineDash([]);
-  }
-
-  // Draw sensor dots
-  for (const entry of sensorLog) {
-    if (entry.sensor_value === '') continue;
-    const wp = waypoints[entry.waypoint - 1];
-    if (!wp) continue;
-    const p = heatmapWorldToCanvas(wp.x, wp.y);
-    if (!p) continue;
-    const val = parseFloat(entry.sensor_value);
-    const color = sensorToColor(val, vmin, vmax);
-
-    // Outer glow
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 18, 0, 2 * Math.PI);
-    ctx.fillStyle = color.replace('rgb', 'rgba').replace(')', ',0.25)');
-    ctx.fill();
-
-    // Main dot
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 10, 0, 2 * Math.PI);
-    ctx.fillStyle = color;
-    ctx.fill();
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    // Value label
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 9px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(val.toFixed(0), p.x, p.y);
-  }
-}
-
-function heatmapWorldToCanvas(wx, wy) {
-  if (!mapMeta || !heatmapFloorImg) return null;
-  const img = heatmapFloorImg;
-  const gx = (wx - mapMeta.origin_x) / mapMeta.resolution;
-  const gy = (wy - mapMeta.origin_y) / mapMeta.resolution;
-  const gyFlipped = mapMeta.height - 1 - gy;
-  const plotLeft = 0.125 * img.naturalWidth;
-  const plotRight = 0.95 * img.naturalWidth;
-  const plotTop = 0.07 * img.naturalHeight;
-  const plotBottom = 0.90 * img.naturalHeight;
-  const plotW = plotRight - plotLeft;
-  const plotH = plotBottom - plotTop;
-  return {
-    x: plotLeft + (gx / mapMeta.width) * plotW,
-    y: plotTop + (gyFlipped / mapMeta.height) * plotH,
-  };
-}
-
-// ---- Init ----
+// ---- Boot ----
 init();
 </script>
 </body>

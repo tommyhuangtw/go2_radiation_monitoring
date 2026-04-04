@@ -7,9 +7,12 @@ from LiDAR data. Generates a point cloud (PLY) and 2D floor plan.
 For waypoint recording, use route_recorder.py separately.
 
 Usage:
+    # Ethernet (direct DDS):
     python sensor_monitor/lidar_mapper.py
     python sensor_monitor/lidar_mapper.py --throttle 10 --downsample 2
-    python sensor_monitor/lidar_mapper.py --interface enp0s2
+
+    # WiFi (via dds_bridge.py on Jetson):
+    python sensor_monitor/lidar_mapper.py --bridge 192.168.0.207
 
 Controls:
     [Enter] - Toggle mapping on/off (pause/resume)
@@ -26,6 +29,8 @@ import math
 import json
 import select
 import shutil
+
+import threading
 
 import numpy as np
 
@@ -45,8 +50,9 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
 
 class LidarMapper:
-    def __init__(self, network_interface="enp0s2", throttle_hz=5, downsample=2):
-        ChannelFactoryInitialize(0, network_interface)
+    def __init__(self, network_interface="enp0s2", throttle_hz=5, downsample=2,
+                 bridge_host=None, bridge_port=9877, lidar_port=9879):
+        self._bridge_mode = bridge_host is not None
 
         # Position tracking (for display)
         self.current_x = 0.0
@@ -74,13 +80,35 @@ class LidarMapper:
         # Timing
         self.start_time = time.time()
 
-        # Subscribe to robot state (for position display)
-        self.state_sub = ChannelSubscriber("rt/sportmodestate", SportModeState_)
-        self.state_sub.Init(self._on_state, 10)
+        if self._bridge_mode:
+            # WiFi mode: use bridge client for state + lidar receiver for clouds
+            from wifi_bridge_client import WiFiBridgeClient, LidarBridgeReceiver
 
-        # Subscribe to LiDAR point cloud (deskewed = in odom frame)
-        self.lidar_sub = ChannelSubscriber("rt/utlidar/cloud_deskewed", PointCloud2_)
-        self.lidar_sub.Init(self._on_lidar, 10)
+            print(f"Connecting to DDS bridge at {bridge_host}:{bridge_port}...")
+            self._bridge_client = WiFiBridgeClient(bridge_host, bridge_port)
+            self._bridge_client.connect()
+            print("Bridge connected!")
+
+            # Poll state from bridge
+            self._bridge_poll_thread = threading.Thread(
+                target=self._bridge_state_poll, daemon=True)
+            self._bridge_poll_thread.start()
+
+            # LiDAR receiver with callback
+            self._lidar_receiver = LidarBridgeReceiver(
+                bridge_host, lidar_port, callback=self._on_lidar_bridge)
+            self._lidar_receiver.start()
+        else:
+            # Ethernet mode: direct DDS
+            ChannelFactoryInitialize(0, network_interface)
+
+            # Subscribe to robot state (for position display)
+            self.state_sub = ChannelSubscriber("rt/sportmodestate", SportModeState_)
+            self.state_sub.Init(self._on_state, 10)
+
+            # Subscribe to LiDAR point cloud (deskewed = in odom frame)
+            self.lidar_sub = ChannelSubscriber("rt/utlidar/cloud_deskewed", PointCloud2_)
+            self.lidar_sub.Init(self._on_lidar, 10)
 
         # Wait for state
         print("Waiting for robot state...")
@@ -95,13 +123,42 @@ class LidarMapper:
         # Wait for LiDAR
         print("Waiting for LiDAR data...")
         t0 = time.time()
-        while not self.lidar_ready and time.time() - t0 < 5.0:
+        lidar_ready_check = lambda: self.lidar_ready or (self._bridge_mode and self._lidar_receiver.lidar_ready)
+        while not lidar_ready_check() and time.time() - t0 < 8.0:
             time.sleep(0.1)
-        if self.lidar_ready:
+        if lidar_ready_check():
+            self.lidar_ready = True
             print("LiDAR data received!")
         else:
             print("WARNING: No LiDAR data received. LiDAR may be off.")
-            print("  Tip: Enable LiDAR via Unitree App or rt/utlidar/switch topic")
+            if not self._bridge_mode:
+                print("  Tip: Enable LiDAR via Unitree App or rt/utlidar/switch topic")
+            else:
+                print("  Tip: Make sure dds_bridge.py is running with --lidar flag")
+
+    def _bridge_state_poll(self):
+        """Poll bridge client for state updates (WiFi mode)."""
+        while self._bridge_mode and self._bridge_client._connected:
+            x, y, yaw = self._bridge_client.get_position()
+            self.current_x = x
+            self.current_y = y
+            self.current_yaw = yaw
+            self.state_ready = self._bridge_client.state_ready
+            time.sleep(0.05)  # 20Hz polling
+
+    def _on_lidar_bridge(self, points):
+        """Callback from LidarBridgeReceiver: already-parsed Nx3 numpy array."""
+        self.lidar_ready = True
+        if not self.mapping_active:
+            return
+
+        # Downsample
+        if self.downsample_factor > 1:
+            points = points[::self.downsample_factor]
+
+        self.all_points.append(points)
+        self.total_points += len(points)
+        self.lidar_frames += 1
 
     def _on_state(self, msg):
         self.current_x = msg.position[0]
@@ -260,43 +317,35 @@ class LidarMapper:
         grid_norm = np.clip(grid, 0, np.percentile(grid[grid > 0], 95) if np.any(grid > 0) else 1)
         grid_img = 255 - (grid_norm / grid_norm.max() * 255).astype(np.uint8)
 
-        # Save floor plan as PNG using matplotlib (no opencv needed)
+        # Save raw floor plan PNG (no axes — exact pixel-to-world mapping)
+        # Flip vertically so image origin is top-left (y increases downward)
+        # but world origin_y is bottom-left. Web UI handles the flip.
+        grid_img_flipped = grid_img[::-1]  # flip Y for image convention
+        png_path = os.path.join(DATA_DIR, "floor_plan.png")
         try:
             import matplotlib
             matplotlib.use('Agg')
             import matplotlib.pyplot as plt
+            plt.imsave(png_path, grid_img_flipped, cmap='gray', vmin=0, vmax=255)
+            print(f"  Saved floor plan to {png_path}")
+        except ImportError:
+            print("  WARNING: matplotlib not available, skipping floor plan PNG.")
 
+        # Also save annotated version for manual inspection
+        try:
             fig, ax = plt.subplots(1, 1, figsize=(10, 10))
             ax.imshow(grid_img, cmap='gray', origin='lower',
                       extent=[x_min, x_max, y_min, y_max])
-
-            # Overlay waypoints if waypoints.json exists
-            wp_path = os.path.join(DATA_DIR, "waypoints.json")
-            if os.path.exists(wp_path):
-                with open(wp_path, 'r') as f:
-                    wp_data = json.load(f)
-                if wp_data:
-                    wx = [wp["x"] for wp in wp_data]
-                    wy = [wp["y"] for wp in wp_data]
-                    ax.plot(wx, wy, 'r-o', markersize=8, linewidth=2, label='Monitoring route')
-                    for i, wp in enumerate(wp_data):
-                        ax.annotate(f'{i+1}', (wp["x"], wp["y"]), fontsize=10,
-                                    fontweight='bold', color='red',
-                                    ha='center', va='bottom', xytext=(0, 10),
-                                    textcoords='offset points')
-                    ax.legend()
-
             ax.set_xlabel('X (m)')
             ax.set_ylabel('Y (m)')
             ax.set_title('Floor Plan (top-down LiDAR projection)')
             ax.set_aspect('equal')
-
-            png_path = os.path.join(DATA_DIR, "floor_plan.png")
-            fig.savefig(png_path, dpi=150, bbox_inches='tight')
+            annotated_path = os.path.join(DATA_DIR, "floor_plan_annotated.png")
+            fig.savefig(annotated_path, dpi=150, bbox_inches='tight')
             plt.close(fig)
-            print(f"  Saved floor plan to {png_path}")
-        except ImportError:
-            print("  WARNING: matplotlib not available, skipping floor plan PNG.")
+            print(f"  Saved annotated floor plan to {annotated_path}")
+        except Exception:
+            pass
 
         # Save raw grid as numpy
         npy_path = os.path.join(DATA_DIR, "floor_plan.npy")
@@ -408,6 +457,12 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="LiDAR Mapper - Build 3D point cloud maps")
     parser.add_argument("--interface", default="enp0s2", help="Network interface (default: enp0s2)")
+    parser.add_argument("--bridge", default=None, metavar="HOST",
+                        help="WiFi bridge host (e.g. 192.168.0.207). Uses TCP bridge instead of DDS.")
+    parser.add_argument("--bridge-port", type=int, default=9877,
+                        help="WiFi bridge TCP port (default: 9877)")
+    parser.add_argument("--lidar-port", type=int, default=9879,
+                        help="LiDAR relay TCP port on bridge host (default: 9879)")
     parser.add_argument("--throttle", type=float, default=5.0, help="LiDAR processing rate in Hz (default: 5)")
     parser.add_argument("--downsample", type=int, default=2, help="Keep every Nth point (default: 2)")
     parser.add_argument("--resolution", type=float, default=0.05, help="Floor plan resolution m/pixel (default: 0.05)")
@@ -415,7 +470,9 @@ if __name__ == "__main__":
     parser.add_argument("--z-max", type=float, default=1.5, help="Floor plan max height in meters (default: 1.5)")
     args = parser.parse_args()
 
-    mapper = LidarMapper(args.interface, args.throttle, args.downsample)
+    mapper = LidarMapper(args.interface, args.throttle, args.downsample,
+                         bridge_host=args.bridge, bridge_port=args.bridge_port,
+                         lidar_port=args.lidar_port)
     mapper.resolution = args.resolution
     mapper.z_min = args.z_min
     mapper.z_max = args.z_max

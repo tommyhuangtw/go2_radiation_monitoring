@@ -9,10 +9,14 @@ Usage:
     python sensor_monitor/auto_navigator.py --web          # Launch web UI
     python sensor_monitor/auto_navigator.py --web --web-port 8080
 
+    # WiFi mode (requires dds_bridge.py running on Jetson):
+    python sensor_monitor/auto_navigator.py --bridge 192.168.0.207
+
 Prerequisites:
     - waypoints.json in sensor_monitor/data/ (from route_recorder.py)
     - Robot placed at the same starting position as during recording
     - (Optional) sensor_bridge.py running on Jetson for sensor data
+    - (WiFi mode) dds_bridge.py running on Jetson
 """
 
 import sys
@@ -23,6 +27,9 @@ import json
 import csv
 import socket
 import threading
+import shutil
+import statistics
+from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -32,11 +39,44 @@ from unitree_sdk2py.idl.unitree_go.msg.dds_ import SportModeState_
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
+SENSOR_PROFILES = {
+    "sound": {
+        "name": "Sound Intensity",
+        "unit": "",
+        "label": "Sound Level",
+        "default_safe": 300,
+        "default_warn": 600,
+        "precision": 0,
+    },
+    "radiation": {
+        "name": "Radiation",
+        "unit": "\u00b5Sv/h",
+        "label": "Radiation Level",
+        "default_safe": 0.3,
+        "default_warn": 1.0,
+        "precision": 3,
+    },
+}
+
 
 class AutoNavigator:
     def __init__(self, network_interface="enp0s2",
-                 sensor_host="192.168.123.18", sensor_port=9876):
-        ChannelFactoryInitialize(0, network_interface)
+                 sensor_host="192.168.123.18", sensor_port=9876,
+                 bridge_host=None, bridge_port=9877,
+                 no_sensor=False,
+                 save_history=True,
+                 rotate_tolerance=0.05, move_tolerance=0.05,
+                 gantry_host=None, gantry_port=8090,
+                 gantry_height=1500.0, measure_duration=5.0,
+                 measure_mode="3d",
+                 sensor_type="sound"):
+        self._bridge_mode = bridge_host is not None
+        self.sensor_profile = SENSOR_PROFILES.get(sensor_type, SENSOR_PROFILES["sound"])
+        self._bridge_client = None
+
+        # Navigation tolerances
+        self.rotate_tolerance = rotate_tolerance
+        self.move_tolerance = move_tolerance
 
         # Position tracking
         self.current_x = 0.0
@@ -51,9 +91,12 @@ class AutoNavigator:
 
         # Sensor data log
         self.sensor_log = []
+        self.raw_sensor_log = []
+        self._history_ts = None  # set by save_sensor_data() for viz history copies
+        self.save_history = save_history
 
         # Navigation state (for web mode)
-        self.nav_state = "idle"          # idle|standing_up|navigating|collecting|waiting|done|error
+        self.nav_state = "idle"          # idle|standing_up|navigating|collecting|collecting_low|gantry_raising|collecting_high|waiting|done|error
         self.current_waypoint_idx = 0    # 0-based index into waypoints_adjusted
         self.total_waypoints = 0
         self.waypoints_adjusted = []     # populated by prepare_patrol()
@@ -65,26 +108,56 @@ class AutoNavigator:
         self._stop_event = threading.Event()
         self._web_mode = False
 
-        # Subscribe to state
-        self.sub = ChannelSubscriber("rt/sportmodestate", SportModeState_)
-        self.sub.Init(self._on_state, 10)
+        # Gantry control (optional — runs on Jetson, accessed via HTTP)
+        self.gantry_client = None
+        self.gantry_height = float(gantry_height)
+        self.measure_duration = float(measure_duration)
+        self.measure_mode = measure_mode  # "2d" or "3d"
+        if gantry_host:
+            from gantry_client import GantryClient
+            self.gantry_client = GantryClient(gantry_host, gantry_port)
+            print(f"Gantry client: {gantry_host}:{gantry_port}")
+
+        if self._bridge_mode:
+            # WiFi mode: connect to DDS bridge on Jetson
+            from wifi_bridge_client import WiFiBridgeClient
+            print(f"Connecting to DDS bridge at {bridge_host}:{bridge_port}...")
+            self._bridge_client = WiFiBridgeClient(bridge_host, bridge_port)
+            self._bridge_client.connect()
+            self.sport_client = self._bridge_client  # same interface
+            print("Bridge connected!")
+        else:
+            # Ethernet mode: direct DDS
+            ChannelFactoryInitialize(0, network_interface)
+
+            # Subscribe to state
+            self.sub = ChannelSubscriber("rt/sportmodestate", SportModeState_)
+            self.sub.Init(self._on_state, 10)
+
+            # Sport Client
+            self.sport_client = SportClient()
+            self.sport_client.SetTimeout(10.0)
+            self.sport_client.Init()
 
         # Start sensor TCP client thread
+        self._no_sensor = no_sensor
         self._sensor_host = sensor_host
         self._sensor_port = sensor_port
-        self._sensor_thread = threading.Thread(
-            target=self._sensor_tcp_loop, daemon=True)
-        self._sensor_thread.start()
-
-        # Sport Client
-        self.sport_client = SportClient()
-        self.sport_client.SetTimeout(10.0)
-        self.sport_client.Init()
+        if not no_sensor:
+            self._sensor_thread = threading.Thread(
+                target=self._sensor_tcp_loop, daemon=True)
+            self._sensor_thread.start()
 
         # Wait for state
         print("Waiting for state updates...")
         t0 = time.time()
         while not self.state_ready and time.time() - t0 < 5.0:
+            if self._bridge_mode:
+                # Poll bridge client for state
+                self.state_ready = self._bridge_client.state_ready
+                if self.state_ready:
+                    x, y, yaw = self._bridge_client.get_position()
+                    self.current_x, self.current_y, self.current_yaw = x, y, yaw
             time.sleep(0.1)
         if self.state_ready:
             print(f"State ready! Position: ({self.current_x:.2f}, {self.current_y:.2f}), "
@@ -92,22 +165,83 @@ class AutoNavigator:
         else:
             print("WARNING: State update timeout! Robot may not be connected.")
 
+        # Start bridge state polling thread (WiFi mode)
+        if self._bridge_mode:
+            self._bridge_poll_thread = threading.Thread(
+                target=self._bridge_state_poll, daemon=True)
+            self._bridge_poll_thread.start()
+
         # Wait for sensor connection (up to 8s to cover connect timeout + retry)
-        if not self.sensor_connected:
+        if no_sensor:
+            print("Sensor disabled (--no-sensor).")
+        elif not self.sensor_connected:
             print(f"Waiting for sensor connection ({self._sensor_host}:{self._sensor_port})...")
             t0 = time.time()
             while not self.sensor_connected and time.time() - t0 < 8.0:
                 time.sleep(0.2)
-        if self.sensor_connected:
-            print(f"Sensor connected!")
+            if self.sensor_connected:
+                print(f"Sensor connected!")
+            else:
+                print(f"WARNING: Sensor not connected. Values will be N/A.")
+
+        # --- System status banner ---
+        self._print_system_status()
+
+    def _print_system_status(self):
+        """Print a loud summary of all subsystem connections."""
+        print("\n" + "=" * 60)
+        print("  SYSTEM STATUS")
+        print("=" * 60)
+
+        # DDS / Bridge
+        if self._bridge_mode:
+            status = "CONNECTED" if self.state_ready else "*** NOT READY ***"
+            host = self._bridge_client._host if hasattr(self._bridge_client, '_host') else "bridge"
+            print(f"  DDS Bridge:  {status}")
         else:
-            print(f"WARNING: Sensor not connected. Values will be N/A.")
+            status = "CONNECTED" if self.state_ready else "*** NOT READY ***"
+            print(f"  DDS Direct:  {status}")
+
+        # Sensor
+        if self._no_sensor:
+            print(f"  Sensor:      DISABLED (--no-sensor)")
+        elif self.sensor_connected:
+            print(f"  Sensor:      CONNECTED ({self._sensor_host}:{self._sensor_port})")
+        else:
+            print(f"  Sensor:      *** NOT CONNECTED *** ({self._sensor_host}:{self._sensor_port})")
+            print(f"               Make sure: python3 ~/sensor_bridge.py --port /dev/ttyACM0")
+
+        # Gantry
+        if self.gantry_client:
+            if self.gantry_client.is_reachable():
+                print(f"  Gantry:      CONNECTED ({self.gantry_client.base_url})")
+            else:
+                print(f"  Gantry:      *** NOT REACHABLE *** ({self.gantry_client.base_url})")
+                print(f"               Make sure: python3 ~/gantry_control.py --web --port /dev/ttyUSB0")
+        else:
+            print(f"  Gantry:      NOT CONFIGURED (no --gantry-host)")
+
+        # Measure mode
+        mode_label = "2D (single elevated height)" if self.measure_mode == "2d" else "3D (dual altitude: mid + top)"
+        print(f"  Mode:        {mode_label}")
+
+        print("=" * 60 + "\n")
 
     def _on_state(self, msg):
         self.current_x = msg.position[0]
         self.current_y = msg.position[1]
         self.current_yaw = msg.imu_state.rpy[2]
         self.state_ready = True
+
+    def _bridge_state_poll(self):
+        """Poll bridge client for state updates (WiFi mode)."""
+        while self._bridge_mode and self._bridge_client._connected:
+            x, y, yaw = self._bridge_client.get_position()
+            self.current_x = x
+            self.current_y = y
+            self.current_yaw = yaw
+            self.state_ready = self._bridge_client.state_ready
+            time.sleep(0.02)  # 50Hz polling
 
     def _sensor_tcp_loop(self):
         """Background thread: connect to sensor bridge via TCP, read JSON lines."""
@@ -165,8 +299,8 @@ class AutoNavigator:
         """Check if emergency stop was requested."""
         return self._stop_event.is_set()
 
-    def rotate_to_target(self, target_x, target_y, tolerance=0.25, timeout=30.0):
-        """Rotate to face target point using SportClient.Move."""
+    def rotate_to_target(self, target_x, target_y, tolerance=0.05, timeout=30.0):
+        """Rotate to face target point using P-control with damping."""
         print("  Rotating to face target...")
 
         target_yaw = self.angle_to(target_x, target_y)
@@ -176,6 +310,7 @@ class AutoNavigator:
         iteration = 0
         last_progress_check_time = start_time
         last_yaw_error = None
+        prev_yaw_error = None
 
         while True:
             if self._is_stopped():
@@ -195,8 +330,8 @@ class AutoNavigator:
                 break
 
             # Stuck detection
-            if time.time() - last_progress_check_time > 5.0:
-                if last_yaw_error is not None and abs(abs(yaw_error) - abs(last_yaw_error)) < 0.05:
+            if time.time() - last_progress_check_time > 1.0:
+                if last_yaw_error is not None and abs(abs(yaw_error) - abs(last_yaw_error)) < 0.02:
                     print(f"    [Rotate] No progress, skipping (error: {math.degrees(yaw_error):.1f})")
                     break
                 last_yaw_error = abs(yaw_error)
@@ -206,19 +341,28 @@ class AutoNavigator:
                 print(f"    [Rotate] Timeout! Error: {math.degrees(yaw_error):.1f}")
                 break
 
-            if abs(yaw_error) < 0.05:
+            # PD control: proportional + derivative damping
+            Kp = 2.0
+            Kd = 0.3
+            vyaw = Kp * yaw_error
+            if prev_yaw_error is not None:
+                d_error = (yaw_error - prev_yaw_error) / 0.02
+                vyaw += Kd * d_error
+            prev_yaw_error = yaw_error
+            # Clamp to safe range
+            vyaw = max(min(vyaw, 0.8), -0.8)
+            # Dead zone: stop if error is tiny to avoid jitter
+            if abs(yaw_error) < 0.02:
                 vyaw = 0
-            else:
-                vyaw = 0.8 if yaw_error > 0 else -0.8
             self.sport_client.Move(0, 0, vyaw)
             time.sleep(0.02)
             iteration += 1
 
         self.sport_client.StopMove()
-        time.sleep(0.3)
+        time.sleep(0.1)
 
-    def move_forward_to_target(self, target_x, target_y, tolerance=0.25, speed=0.3, timeout=60.0):
-        """Move forward to target with P-control steering."""
+    def move_forward_to_target(self, target_x, target_y, tolerance=0.05, speed=0.5, timeout=60.0):
+        """Move forward to target with PD-control steering and smooth deceleration."""
         print("  Moving forward...")
 
         start_time = time.time()
@@ -226,6 +370,7 @@ class AutoNavigator:
         last_x, last_y = None, None
         last_progress_time = None
         stuck_counter = 0
+        prev_yaw_error = None
 
         while self.distance_to(target_x, target_y) > tolerance:
             if self._is_stopped():
@@ -236,22 +381,22 @@ class AutoNavigator:
             distance = self.distance_to(target_x, target_y)
 
             if iteration % 50 == 0:
-                print(f"    [Move] pos=({x:.2f}, {y:.2f}), dist={distance:.2f}m")
+                print(f"    [Move] pos=({x:.2f}, {y:.2f}), dist={distance:.3f}m")
 
             if time.time() - start_time > timeout:
-                print(f"    [Move] Timeout! Distance: {distance:.2f}m")
+                print(f"    [Move] Timeout! Distance: {distance:.3f}m")
                 break
 
-            # Stuck detection: check every 2s if robot moved at least 5cm
+            # Stuck detection: check every 2s if robot moved at least 2cm
             if last_x is None:
                 last_x, last_y = x, y
                 last_progress_time = time.time()
             elif time.time() - last_progress_time > 2.0:
                 position_change = math.sqrt((x - last_x)**2 + (y - last_y)**2)
-                if position_change < 0.05:
+                if position_change < 0.02:
                     stuck_counter += 1
                     if stuck_counter >= 3:  # 6 seconds of no real progress
-                        print(f"    [Move] Stuck, accepting position (dist: {distance:.2f}m)")
+                        print(f"    [Move] Stuck, accepting position (dist: {distance:.3f}m)")
                         break
                 else:
                     stuck_counter = 0
@@ -261,9 +406,22 @@ class AutoNavigator:
             target_yaw = self.angle_to(target_x, target_y)
             yaw_error = self.normalize_angle(target_yaw - yaw)
 
-            vx = min(speed, distance * 0.8)
-            vx = max(vx, 0.15)
-            vyaw = max(min(yaw_error * 0.8, 0.3), -0.3)
+            # Smooth deceleration: slow down proportionally as we approach
+            vx = min(speed, distance * 2.0)
+            vx = max(vx, 0.1)
+            # Extra slow for final approach
+            if distance < 0.08:
+                vx = min(vx, 0.1)
+
+            # PD steering control
+            Kp_steer = 1.2
+            Kd_steer = 0.2
+            vyaw = Kp_steer * yaw_error
+            if prev_yaw_error is not None:
+                d_error = (yaw_error - prev_yaw_error) / 0.02
+                vyaw += Kd_steer * d_error
+            prev_yaw_error = yaw_error
+            vyaw = max(min(vyaw, 0.4), -0.4)
 
             self.sport_client.Move(vx, 0, vyaw)
             time.sleep(0.02)
@@ -272,19 +430,19 @@ class AutoNavigator:
         self.sport_client.StopMove()
         print(f"    [Move] Complete! Final dist: {self.distance_to(target_x, target_y):.3f}m")
 
-    def move_to_point(self, target_x, target_y, tolerance=0.25):
+    def move_to_point(self, target_x, target_y, rotate_tolerance=0.12, move_tolerance=0.05):
         """Two-phase navigation: rotate then move forward."""
         x, y, _ = self.get_position()
         print(f"  Current: ({x:.2f}, {y:.2f}), Target: ({target_x:.2f}, {target_y:.2f})")
 
-        if self.distance_to(target_x, target_y) < tolerance:
+        if self.distance_to(target_x, target_y) < move_tolerance:
             print("  Already at target!")
             return
 
-        self.rotate_to_target(target_x, target_y)
+        self.rotate_to_target(target_x, target_y, tolerance=rotate_tolerance)
         if self._is_stopped():
             return
-        self.move_forward_to_target(target_x, target_y, tolerance)
+        self.move_forward_to_target(target_x, target_y, tolerance=move_tolerance)
         if not self._is_stopped():
             print("  Arrived!")
 
@@ -297,7 +455,7 @@ class AutoNavigator:
         return None
 
     def log_data_point(self, waypoint_idx):
-        """Log current position + sensor value."""
+        """Log current position + sensor value (single-measurement, no gantry)."""
         x, y, yaw = self.get_position()
         val = self.read_sensor()
 
@@ -306,31 +464,151 @@ class AutoNavigator:
             "waypoint": waypoint_idx,
             "x": round(x, 4),
             "y": round(y, 4),
-            "z": 0.0,  # ground level (could use body_height if needed)
+            "z": 0.0,
             "yaw": round(yaw, 4),
             "sensor_value": val if val is not None else "",
+            "sensor_stddev": "",
+            "altitude_mm": 0,
+            "measurement_phase": "",
         }
         self.sensor_log.append(entry)
 
         v_str = f"{val}" if val is not None else "N/A"
         print(f"    Logged: pos=({x:.3f}, {y:.3f}), sensor={v_str}")
 
+    def _collect_sensor_averaged(self, waypoint_idx, duration=5.0, altitude_mm=0, phase="low"):
+        """Collect sensor readings over `duration` seconds, log the average and stddev."""
+        x, y, yaw = self.get_position()
+        readings = []
+        t0 = time.time()
+        last_raw_ts = 0.0
+        while time.time() - t0 < duration:
+            if self._is_stopped():
+                break
+            val = self.read_sensor()
+            if val is not None:
+                readings.append(val)
+                now = time.time()
+                if now - last_raw_ts >= 1.0:
+                    last_raw_ts = now
+                    self.raw_sensor_log.append({
+                        "timestamp": now,
+                        "waypoint": waypoint_idx,
+                        "x": round(x, 4),
+                        "y": round(y, 4),
+                        "yaw": round(yaw, 4),
+                        "sensor_value": val,
+                        "altitude_mm": altitude_mm,
+                        "measurement_phase": phase,
+                    })
+            time.sleep(0.2)  # ~5Hz sampling
+        if readings:
+            avg = statistics.mean(readings)
+            std = statistics.stdev(readings) if len(readings) > 1 else 0.0
+        else:
+            avg = None
+            std = None
+
+        entry = {
+            "timestamp": time.time(),
+            "waypoint": waypoint_idx,
+            "x": round(x, 4),
+            "y": round(y, 4),
+            "z": 0.0,
+            "yaw": round(yaw, 4),
+            "sensor_value": round(avg, 2) if avg is not None else "",
+            "sensor_stddev": round(std, 2) if std is not None else "",
+            "altitude_mm": altitude_mm,
+            "measurement_phase": phase,
+        }
+        self.sensor_log.append(entry)
+
+        v_str = f"{avg:.1f} (std={std:.1f}, n={len(readings)})" if avg is not None else "N/A"
+        print(f"    Logged [{phase}@{altitude_mm}mm]: pos=({x:.3f}, {y:.3f}), sensor={v_str}")
+
+    def _ensure_gantry_home(self, timeout=60.0):
+        """Block until gantry is at home position (0mm). Send move_to(0) if needed."""
+        if not self.gantry_client:
+            return
+        if self.gantry_client.is_at_home():
+            return
+        # Gantry might still be lowering from previous waypoint — wait
+        print("    Waiting for gantry to reach home...")
+        if not self.gantry_client.wait_for_arrival(timeout=timeout):
+            # Still not at home — force it
+            print("    Gantry not at home, forcing move to 0mm...")
+            self.gantry_client.move_to(0)
+            if not self.gantry_client.wait_for_arrival(timeout=timeout):
+                raise RuntimeError("Gantry failed to reach home position")
+
+    def _ensure_gantry_at_mid(self, timeout=60.0):
+        """Block until gantry is at mid position (gantry_height / 2)."""
+        if not self.gantry_client:
+            return
+        mid = self.gantry_height / 2
+        state = self.gantry_client.get_state()
+        pos = state.get("current_position_mm", 0)
+        if not state.get("moving", False) and abs(pos - mid) < 5:
+            return
+        # Gantry might still be lowering from previous waypoint — wait
+        print(f"    Waiting for gantry to reach {mid}mm...")
+        if not self.gantry_client.wait_for_arrival(timeout=timeout):
+            # Still not at mid — force it
+            print(f"    Gantry not at mid, forcing move to {mid}mm...")
+            self.gantry_client.move_to(mid)
+            if not self.gantry_client.wait_for_arrival(timeout=timeout):
+                raise RuntimeError("Gantry failed to reach mid position")
+
     def save_sensor_data(self):
-        """Save sensor log to CSV."""
+        """Save sensor log to CSV (averaged + raw)."""
         if not self.sensor_log:
             print("No sensor data to save.")
             return
 
         os.makedirs(DATA_DIR, exist_ok=True)
-        csv_path = os.path.join(DATA_DIR, "sensor_data.csv")
 
-        fieldnames = ["timestamp", "waypoint", "x", "y", "z", "yaw", "sensor_value"]
+        # Averaged data (1 row per waypoint per phase)
+        csv_path = os.path.join(DATA_DIR, "sensor_data.csv")
+        fieldnames = ["timestamp", "waypoint", "x", "y", "z", "yaw", "sensor_value",
+                      "sensor_stddev", "altitude_mm", "measurement_phase"]
         with open(csv_path, 'w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(self.sensor_log)
+        print(f"Saved {len(self.sensor_log)} averaged data points to {csv_path}")
 
-        print(f"Saved {len(self.sensor_log)} data points to {csv_path}")
+        # Raw data (every individual reading at ~5Hz)
+        raw_csv_path = os.path.join(DATA_DIR, "sensor_data_raw.csv")
+        if self.raw_sensor_log:
+            raw_fieldnames = ["timestamp", "waypoint", "x", "y", "yaw",
+                              "sensor_value", "altitude_mm", "measurement_phase"]
+            with open(raw_csv_path, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=raw_fieldnames)
+                writer.writeheader()
+                writer.writerows(self.raw_sensor_log)
+            print(f"Saved {len(self.raw_sensor_log)} raw readings to {raw_csv_path}")
+
+        if not self.save_history:
+            return
+
+        # Keep a per-run historical snapshot with timestamp.
+        history_dir = os.path.join(DATA_DIR, "history_data")
+        os.makedirs(history_dir, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self._history_ts = ts
+
+        for src, suffix in [
+            (csv_path, "sensor_data.csv"),
+            (raw_csv_path, "sensor_data_raw.csv"),
+            (os.path.join(DATA_DIR, "waypoints.json"), "waypoints.json"),
+        ]:
+            if os.path.exists(src):
+                dst = os.path.join(history_dir, f"{ts}_{suffix}")
+                try:
+                    shutil.copy2(src, dst)
+                    print(f"  History: {dst}")
+                except OSError as e:
+                    print(f"WARNING: Failed to copy {suffix} to history: {e}")
 
     def load_waypoints(self):
         """Load waypoints from JSON file."""
@@ -362,10 +640,21 @@ class AutoNavigator:
         """Emergency stop: halt movement immediately."""
         self._stop_event.set()
         self.sport_client.StopMove()
+        if self.gantry_client:
+            try:
+                self.gantry_client.stop()
+            except Exception:
+                pass
         self.nav_state = "idle"
 
     def get_state_snapshot(self):
         """Return current state as a dict for WebSocket broadcast."""
+        gantry_state = None
+        if self.gantry_client:
+            try:
+                gantry_state = self.gantry_client.get_state()
+            except Exception:
+                gantry_state = {"connected": False, "status": "unreachable"}
         return {
             "nav_state": self.nav_state,
             "position": {
@@ -380,6 +669,16 @@ class AutoNavigator:
             "sensor_connected": self.sensor_connected,
             "sensor_log": list(self.sensor_log),
             "error": self.patrol_error,
+            "gantry": gantry_state,
+            "measure_mode": self.measure_mode,
+            "measure_duration": self.measure_duration,
+            "sensor_type": self.sensor_profile["name"],
+            "sensor_unit": self.sensor_profile["unit"],
+            "sensor_precision": self.sensor_profile["precision"],
+            "sensor_defaults": {
+                "safe": self.sensor_profile["default_safe"],
+                "warn": self.sensor_profile["default_warn"],
+            },
         }
 
     # ------------------------------------------------------------------
@@ -396,13 +695,15 @@ class AutoNavigator:
         self.total_waypoints = len(waypoints)
         self.waypoint_statuses = ["pending"] * len(waypoints)
         self.sensor_log = []
+        self.raw_sensor_log = []
+        self._history_ts = None
         self.patrol_error = ""
 
         # Stand up
         self.nav_state = "standing_up"
         print("\nStanding up...")
         self.sport_client.StandUp()
-        time.sleep(3)
+        time.sleep(1.5)
 
         if self._is_stopped():
             return False
@@ -410,7 +711,7 @@ class AutoNavigator:
         # Enable FreeWalk mode
         print("Activating FreeWalk...")
         self.sport_client.FreeWalk()
-        time.sleep(1)
+        time.sleep(0.5)
 
         if self._is_stopped():
             return False
@@ -435,6 +736,32 @@ class AutoNavigator:
 
         self.waypoints_adjusted = adjusted
         print(f"\nAdjusted waypoints: yaw_offset={math.degrees(yaw_offset):+.1f}deg")
+
+        # Auto-home gantry at patrol start (retry up to 3 times)
+        if self.gantry_client:
+            gantry_ok = False
+            for attempt in range(1, 4):
+                try:
+                    if self.gantry_client.is_reachable():
+                        self.gantry_client.home_here()
+                        print("Gantry: auto-homed (current position = 0mm)")
+                        gantry_ok = True
+                        break
+                    else:
+                        print(f"  Gantry not reachable (attempt {attempt}/3)...")
+                except Exception as e:
+                    print(f"  Gantry connection error (attempt {attempt}/3): {e}")
+                if attempt < 3:
+                    time.sleep(2)
+
+            if not gantry_ok:
+                print("\n" + "!" * 60)
+                print(f"  ERROR: Gantry at {self.gantry_client.base_url} not reachable!")
+                print(f"  Make sure on Jetson: python3 ~/gantry_control.py --web --port /dev/ttyUSB0")
+                print("!" * 60)
+                print("Continuing WITHOUT gantry (single-altitude mode).\n")
+                self.gantry_client = None
+
         return True
 
     def start_patrol(self):
@@ -452,36 +779,153 @@ class AutoNavigator:
                 self.waypoint_statuses[i] = "navigating"
                 print(f"\n>>> Waypoint {i+1}/{len(waypoints)}: ({target_x:.3f}, {target_y:.3f})")
 
-                self.move_to_point(target_x, target_y)
+                self.move_to_point(target_x, target_y,
+                                   rotate_tolerance=self.rotate_tolerance,
+                                   move_tolerance=self.move_tolerance)
 
                 if self._is_stopped():
                     break
 
-                # Log sensor data
-                self.nav_state = "collecting"
-                self.waypoint_statuses[i] = "collecting"
-                time.sleep(1)
-                self.log_data_point(i + 1)
+                if self.gantry_client and self.measure_mode == "2d":
+                    # --- 2D MODE: single elevated measurement ---
 
-                if self._is_stopped():
-                    break
-
-                self.waypoint_statuses[i] = "done"
-
-                # Wait for user (web mode: wait for continue event; CLI: input())
-                if i < len(waypoints) - 1:
-                    if self._web_mode:
-                        self.nav_state = "waiting"
-                        print(f"    Waiting for user to continue...")
-                        self._continue_event.clear()
-                        # Wait with periodic stop-event checks
-                        while not self._continue_event.wait(timeout=0.2):
-                            if self._is_stopped():
-                                break
+                    # First waypoint: raise gantry once
+                    if i == 0:
+                        self.nav_state = "gantry_raising"
+                        self.waypoint_statuses[i] = "gantry_raising"
+                        print(f"    Raising gantry to {self.gantry_height}mm...")
+                        self.gantry_client.move_to(self.gantry_height)
+                        if not self.gantry_client.wait_for_arrival(timeout=120):
+                            state = self.gantry_client.get_state()
+                            raise RuntimeError(f"Gantry failed to reach {self.gantry_height}mm: {state.get('last_error', 'timeout')}")
                         if self._is_stopped():
                             break
 
+                    # Measure at elevated height
+                    self.nav_state = "collecting"
+                    self.waypoint_statuses[i] = "collecting"
+                    print(f"    Collecting sensor data at {self.gantry_height}mm ({self.measure_duration}s)...")
+                    self._collect_sensor_averaged(i + 1, duration=self.measure_duration,
+                                                  altitude_mm=self.gantry_height, phase="elevated")
+                    if self._is_stopped():
+                        break
+
+                    self.waypoint_statuses[i] = "done"
+
+                    # Wait for user confirmation
+                    if i < len(waypoints) - 1:
+                        if self._web_mode:
+                            self.nav_state = "waiting"
+                            print(f"    Waiting for user to continue...")
+                            self._continue_event.clear()
+                            while not self._continue_event.wait(timeout=0.2):
+                                if self._is_stopped():
+                                    break
+                            if self._is_stopped():
+                                break
+
+                    # Last waypoint: start lowering gantry (cleanup will wait)
+                    if i == len(waypoints) - 1:
+                        print(f"    Lowering gantry to home...")
+                        self.gantry_client.move_to(0)
+
+                elif self.gantry_client and self.measure_mode == "3d":
+                    # --- 3D MODE: dual-altitude (mid + top) measurement cycle ---
+                    mid_height = self.gantry_height / 2
+
+                    # Ensure gantry is at mid (raised before first WP, or lowered concurrently)
+                    if i == 0:
+                        self.nav_state = "gantry_raising"
+                        self.waypoint_statuses[i] = "gantry_raising"
+                        print(f"    Raising gantry to {mid_height}mm (mid)...")
+                        self.gantry_client.move_to(mid_height)
+                        if not self.gantry_client.wait_for_arrival(timeout=120):
+                            state = self.gantry_client.get_state()
+                            raise RuntimeError(f"Gantry failed to reach {mid_height}mm: {state.get('last_error', 'timeout')}")
+                    else:
+                        self._ensure_gantry_at_mid(timeout=120)
+                    if self._is_stopped():
+                        break
+
+                    # Mid-height measurement
+                    self.nav_state = "collecting_low"
+                    self.waypoint_statuses[i] = "collecting_low"
+                    print(f"    Collecting sensor data at {mid_height}mm ({self.measure_duration}s)...")
+                    self._collect_sensor_averaged(i + 1, duration=self.measure_duration,
+                                                  altitude_mm=mid_height, phase="mid")
+                    if self._is_stopped():
+                        break
+
+                    # Raise to top
+                    self.nav_state = "gantry_raising"
+                    self.waypoint_statuses[i] = "gantry_raising"
+                    print(f"    Raising gantry to {self.gantry_height}mm (top)...")
+                    self.gantry_client.move_to(self.gantry_height)
+                    if not self.gantry_client.wait_for_arrival(timeout=120):
+                        state = self.gantry_client.get_state()
+                        raise RuntimeError(f"Gantry failed to reach {self.gantry_height}mm: {state.get('last_error', 'timeout')}")
+                    if self._is_stopped():
+                        break
+
+                    # Top measurement
+                    self.nav_state = "collecting_high"
+                    self.waypoint_statuses[i] = "collecting_high"
+                    print(f"    Collecting sensor data at {self.gantry_height}mm ({self.measure_duration}s)...")
+                    self._collect_sensor_averaged(i + 1, duration=self.measure_duration,
+                                                  altitude_mm=self.gantry_height, phase="elevated")
+                    if self._is_stopped():
+                        break
+
+                    self.waypoint_statuses[i] = "done"
+
+                    # Wait for user confirmation
+                    if i < len(waypoints) - 1:
+                        if self._web_mode:
+                            self.nav_state = "waiting"
+                            print(f"    Waiting for user to continue...")
+                            self._continue_event.clear()
+                            while not self._continue_event.wait(timeout=0.2):
+                                if self._is_stopped():
+                                    break
+                            if self._is_stopped():
+                                break
+
+                        # Lower to mid (async — runs in parallel with navigation)
+                        print(f"    Lowering gantry to {mid_height}mm (parallel with navigation)...")
+                        self.gantry_client.move_to(mid_height)
+
+                    else:
+                        # Last waypoint: lower to home
+                        print(f"    Lowering gantry to home...")
+                        self.gantry_client.move_to(0)
+
+                else:
+                    # --- MEASUREMENT (no gantry) ---
+                    self.nav_state = "collecting"
+                    self.waypoint_statuses[i] = "collecting"
+                    print(f"    Collecting sensor data ({self.measure_duration}s)...")
+                    self._collect_sensor_averaged(i + 1, duration=self.measure_duration,
+                                                  altitude_mm=0, phase="")
+
+                    if self._is_stopped():
+                        break
+
+                    self.waypoint_statuses[i] = "done"
+
+                    # Wait for user (web mode: wait for continue event; CLI: input())
+                    if i < len(waypoints) - 1:
+                        if self._web_mode:
+                            self.nav_state = "waiting"
+                            print(f"    Waiting for user to continue...")
+                            self._continue_event.clear()
+                            while not self._continue_event.wait(timeout=0.2):
+                                if self._is_stopped():
+                                    break
+                            if self._is_stopped():
+                                break
+
             if not self._is_stopped():
+                self.save_sensor_data()  # Save BEFORE signaling done
                 self.nav_state = "done"
                 print(f"\n>>> Patrol complete!")
 
@@ -493,17 +937,30 @@ class AutoNavigator:
         finally:
             print("\nStopping...")
             self.sport_client.StopMove()
-            time.sleep(1)
+            time.sleep(0.5)
+
+            # Return gantry to home position before standing down
+            if self.gantry_client:
+                try:
+                    print("Returning gantry to home...")
+                    self.gantry_client.move_to(0)
+                    if self.gantry_client.wait_for_arrival(timeout=120):
+                        print("Gantry returned to home.")
+                    else:
+                        print("WARNING: Gantry return home timed out.")
+                except Exception as e:
+                    print(f"WARNING: Gantry return home failed: {e}")
 
             print("Recovery stand...")
             self.sport_client.RecoveryStand()
-            time.sleep(1)
+            time.sleep(0.5)
 
             print("Standing down...")
             self.sport_client.StandDown()
 
-            print("\nSaving sensor data...")
-            self.save_sensor_data()
+            if self._is_stopped() and self.sensor_log:
+                print("\nSaving sensor data (interrupted)...")
+                self.save_sensor_data()
 
             if self._is_stopped():
                 self.nav_state = "idle"
@@ -573,7 +1030,9 @@ class AutoNavigator:
                     target_x, target_y = wp[0], wp[1]
                     print(f"\n>>> Waypoint {i+1}/{len(waypoints)}: ({target_x:.3f}, {target_y:.3f})")
 
-                    self.move_to_point(target_x, target_y)
+                    self.move_to_point(target_x, target_y,
+                                   rotate_tolerance=self.rotate_tolerance,
+                                   move_tolerance=self.move_tolerance)
 
                     # Log sensor data at this waypoint
                     time.sleep(1)  # brief pause for sensor reading to stabilize
@@ -619,22 +1078,108 @@ if __name__ == "__main__":
     parser.add_argument("--loop", action="store_true", help="Loop route continuously")
     parser.add_argument("--wait", action="store_true", help="Wait for Enter between waypoints")
     parser.add_argument("--interface", default="enp0s2", help="Network interface")
+    parser.add_argument("--bridge", default=None, metavar="HOST",
+                        help="WiFi bridge host (e.g. 192.168.0.207). Uses TCP bridge instead of DDS.")
+    parser.add_argument("--bridge-port", type=int, default=9877,
+                        help="WiFi bridge TCP port (default: 9877)")
     parser.add_argument("--sensor-host", default="192.168.123.18",
                         help="Sensor bridge TCP host (default: 192.168.123.18)")
     parser.add_argument("--sensor-port", type=int, default=9876,
                         help="Sensor bridge TCP port (default: 9876)")
+    parser.add_argument("--no-sensor", action="store_true",
+                        help="Skip sensor connection entirely")
+    parser.add_argument("--no-history", action="store_true",
+                        help="Do not save timestamped history CSV copies")
+    parser.add_argument("--rotate-tolerance", type=float, default=0.05,
+                        help="Rotation tolerance in radians (default: 0.05, ~3 deg)")
+    parser.add_argument("--move-tolerance", type=float, default=0.08,
+                        help="Move-to-point tolerance in meters (default: 0.08, 8cm)")
+    parser.add_argument("--video-port", type=int, default=9878,
+                        help="Video relay TCP port on bridge host (default: 9878)")
+    parser.add_argument("--gantry-host", default=None, metavar="HOST",
+                        help="Gantry controller host (e.g. 192.168.0.207). Enables dual-altitude measurement.")
+    parser.add_argument("--gantry-port", type=int, default=8090,
+                        help="Gantry controller HTTP port (default: 8090)")
+    parser.add_argument("--gantry-height", type=float, default=140.0,
+                        help="Gantry raised height in mm (default: 140)")
+    parser.add_argument("--measure-duration", type=float, default=5.0,
+                        help="Sensor measurement duration in seconds (default: 5.0)")
+    parser.add_argument("--measure-mode", choices=["2d", "3d"], default="3d",
+                        help="2d: single elevated measurement (fast), 3d: dual-altitude (default: 2d)")
     parser.add_argument("--web", action="store_true",
                         help="Launch web UI instead of CLI mode")
     parser.add_argument("--web-port", type=int, default=8080,
                         help="Web server port (default: 8080)")
+    parser.add_argument("--no-gantry", action="store_true",
+                        help="Skip gantry connection entirely")
+    parser.add_argument("--jetson", default=None, metavar="HOST",
+                        help="Jetson WiFi IP — shorthand for --bridge, --sensor-host, and --gantry-host")
+    parser.add_argument("--sensor", choices=list(SENSOR_PROFILES.keys()), default="sound",
+                        help="Sensor type: affects labels, units, thresholds (default: sound)")
+    parser.add_argument("--list-history", action="store_true",
+                        help="List saved patrol history and exit")
     args = parser.parse_args()
+
+    if args.list_history:
+        history_dir = os.path.join(DATA_DIR, "history_data")
+        if not os.path.isdir(history_dir):
+            print("No history data found.")
+            sys.exit(0)
+        import glob as glob_mod
+        files = sorted(glob_mod.glob(os.path.join(history_dir, "*_sensor_data.csv")))
+        if not files:
+            print("No history data found.")
+            sys.exit(0)
+        print(f"\n  {'Date/Time':<22} {'Points':<8} {'Raw?':<6} {'Viz?':<6} File")
+        print(f"  {'-'*22} {'-'*8} {'-'*6} {'-'*6} {'-'*40}")
+        for f in files:
+            basename = os.path.basename(f)
+            ts_str = basename[:15]  # YYYYMMDD_HHMMSS
+            try:
+                with open(f) as fh:
+                    rows = sum(1 for _ in fh) - 1  # minus header
+            except Exception:
+                rows = "?"
+            raw_exists = os.path.exists(f.replace("_sensor_data.csv", "_sensor_data_raw.csv"))
+            viz_exists = os.path.exists(f.replace("_sensor_data.csv", "_sensor_heatmap_2d.png"))
+            print(f"  {ts_str:<22} {rows:<8} {'yes' if raw_exists else 'no':<6} {'yes' if viz_exists else 'no':<6} {basename}")
+        print()
+        sys.exit(0)
+
+    # --no-gantry overrides any gantry-host setting
+    if args.no_gantry:
+        args.gantry_host = None
+
+    # --jetson sets all three host flags at once (individual flags override)
+    if args.jetson:
+        if not args.bridge:
+            args.bridge = args.jetson
+        if args.sensor_host == "192.168.123.18":  # still at default
+            args.sensor_host = args.jetson
+        if not args.gantry_host and not args.no_gantry:
+            args.gantry_host = args.jetson
 
     nav = AutoNavigator(args.interface,
                           sensor_host=args.sensor_host,
-                          sensor_port=args.sensor_port)
+                          sensor_port=args.sensor_port,
+                          bridge_host=args.bridge,
+                          bridge_port=args.bridge_port,
+                          no_sensor=args.no_sensor,
+                          save_history=not args.no_history,
+                          rotate_tolerance=args.rotate_tolerance,
+                          move_tolerance=args.move_tolerance,
+                          gantry_host=args.gantry_host,
+                          gantry_port=args.gantry_port,
+                          gantry_height=args.gantry_height,
+                          measure_duration=args.measure_duration,
+                          measure_mode=args.measure_mode,
+                          sensor_type=args.sensor)
 
     if args.web:
         from web_server import run_web_server
-        run_web_server(nav, port=args.web_port)
+        run_web_server(nav, port=args.web_port,
+                       bridge_mode=nav._bridge_mode,
+                       bridge_host=args.bridge,
+                       video_port=args.video_port)
     else:
         nav.run_patrol(loop=args.loop, wait_for_enter=args.wait)

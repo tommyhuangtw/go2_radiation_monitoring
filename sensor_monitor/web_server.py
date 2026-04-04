@@ -10,10 +10,17 @@ Launched via: python sensor_monitor/auto_navigator.py --web
 """
 
 import os
+import sys
 import json
+import struct
 import asyncio
+import logging
 import threading
+from queue import Queue, Empty
 from pathlib import Path
+
+# Ensure sensor_monitor package is importable
+sys.path.insert(0, str(Path(__file__).parent))
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, JSONResponse
@@ -28,6 +35,9 @@ app = FastAPI(title="Go2 Patrol Monitor")
 navigator = None
 video_client = None
 _video_lock = threading.Lock()
+_bridge_mode = False
+_bridge_host = None
+_webrtc_frame_queue = Queue(maxsize=2)
 
 # Connected WebSocket clients
 connected_clients: set[WebSocket] = set()
@@ -48,7 +58,8 @@ async def get_map_meta():
     if not meta_path.exists():
         return JSONResponse({"error": "map_meta.json not found"}, status_code=404)
     with open(meta_path) as f:
-        return json.load(f)
+        data = json.load(f)
+    return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/waypoints")
@@ -57,7 +68,8 @@ async def get_waypoints():
     if not wp_path.exists():
         return JSONResponse({"error": "waypoints.json not found"}, status_code=404)
     with open(wp_path) as f:
-        return json.load(f)
+        data = json.load(f)
+    return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/floor_plan")
@@ -65,7 +77,134 @@ async def get_floor_plan():
     img_path = DATA_DIR / "floor_plan.png"
     if not img_path.exists():
         return JSONResponse({"error": "floor_plan.png not found"}, status_code=404)
-    return FileResponse(str(img_path), media_type="image/png")
+    return FileResponse(str(img_path), media_type="image/png",
+                        headers={"Cache-Control": "no-store"})
+
+
+# ------------------------------------------------------------------
+# 3D visualization generation
+# ------------------------------------------------------------------
+
+_3d_gen_status = "idle"   # idle | generating | ready | error
+_3d_gen_message = ""
+_3d_gen_lock = threading.Lock()
+
+_2d_gen_status = "idle"   # idle | generating | ready | error
+_2d_gen_message = ""
+_2d_gen_lock = threading.Lock()
+
+
+@app.post("/api/generate_3d")
+async def generate_3d(payload: dict = {}):
+    global _3d_gen_status, _3d_gen_message
+    phase = payload.get("phase", None)
+    with _3d_gen_lock:
+        if _3d_gen_status == "generating":
+            return JSONResponse({"status": "already_running"})
+        _3d_gen_status = "generating"
+        _3d_gen_message = ""
+
+    def worker():
+        global _3d_gen_status, _3d_gen_message
+        try:
+            from sensor_surface_sphere_overlay import generate_3d_html_only
+            generate_3d_html_only(phase=phase)
+            _3d_gen_status = "ready"
+            _3d_gen_message = "3D visualization generated"
+        except Exception as e:
+            _3d_gen_status = "error"
+            _3d_gen_message = str(e)
+            print(f"3D generation error: {e}")
+
+    threading.Thread(target=worker, daemon=True).start()
+    return JSONResponse({"status": "generating"})
+
+
+@app.get("/api/3d_status")
+async def get_3d_status():
+    return JSONResponse({"status": _3d_gen_status, "message": _3d_gen_message})
+
+
+@app.get("/api/sensor_3d")
+async def get_sensor_3d(phase: str = None):
+    suffix = f"_{phase}" if phase else ""
+    html_path = DATA_DIR / f"sensor_3d_interactive{suffix}.html"
+    if not html_path.exists():
+        # Fall back to default (no suffix)
+        html_path = DATA_DIR / "sensor_3d_interactive.html"
+    if not html_path.exists():
+        return JSONResponse({"error": "3D visualization not generated yet"}, status_code=404)
+    return FileResponse(str(html_path), media_type="text/html",
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/generate_2d")
+async def generate_2d():
+    global _2d_gen_status, _2d_gen_message
+    with _2d_gen_lock:
+        if _2d_gen_status == "generating":
+            return JSONResponse({"status": "already_running"})
+        _2d_gen_status = "generating"
+        _2d_gen_message = ""
+
+    def worker():
+        global _2d_gen_status, _2d_gen_message
+        try:
+            from sensor_surface_sphere_overlay import generate_2d_heatmap_only
+            generate_2d_heatmap_only()
+            _2d_gen_status = "ready"
+            _2d_gen_message = "2D heatmap generated"
+        except Exception as e:
+            _2d_gen_status = "error"
+            _2d_gen_message = str(e)
+            print(f"2D generation error: {e}")
+
+    threading.Thread(target=worker, daemon=True).start()
+    return JSONResponse({"status": "generating"})
+
+
+@app.get("/api/2d_status")
+async def get_2d_status():
+    return JSONResponse({"status": _2d_gen_status, "message": _2d_gen_message})
+
+
+@app.get("/api/sensor_heatmap_2d")
+async def get_sensor_heatmap_2d(phase: str = None):
+    suffix = f"_{phase}" if phase else ""
+    png_path = DATA_DIR / f"sensor_heatmap_2d{suffix}.png"
+    if not png_path.exists():
+        png_path = DATA_DIR / "sensor_heatmap_2d.png"
+    if not png_path.exists():
+        return JSONResponse({"error": "2D heatmap not generated yet"}, status_code=404)
+    return FileResponse(str(png_path), media_type="image/png",
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/gantry/home")
+async def gantry_home():
+    """Re-home the gantry (set current position as 0mm)."""
+    if not navigator or not navigator.gantry_client:
+        return JSONResponse({"ok": False, "error": "Gantry not configured"}, status_code=400)
+    try:
+        result = navigator.gantry_client.home_here()
+        return JSONResponse({"ok": True, "state": result.get("state", {})})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@app.get("/api/sensor_data")
+async def get_sensor_data():
+    """Return sensor_data.csv as JSON for the frontend."""
+    csv_path = DATA_DIR / "sensor_data.csv"
+    if not csv_path.exists():
+        return JSONResponse({"error": "sensor_data.csv not found"}, status_code=404)
+    import csv as csv_mod
+    data = []
+    with open(csv_path, "r") as f:
+        reader = csv_mod.DictReader(f)
+        for row in reader:
+            data.append(row)
+    return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
 
 # ------------------------------------------------------------------
@@ -73,8 +212,10 @@ async def get_floor_plan():
 # ------------------------------------------------------------------
 
 def _get_video_client():
-    """Lazy-init VideoClient (thread-safe)."""
+    """Lazy-init VideoClient (thread-safe). Skipped in bridge/WiFi mode."""
     global video_client
+    if _bridge_mode:
+        return None
     if video_client is not None:
         return video_client
     with _video_lock:
@@ -93,8 +234,64 @@ def _get_video_client():
             return None
 
 
+def _init_video_bridge(bridge_host, video_port=9878):
+    """Background thread: receive JPEG frames from dds_bridge video relay over TCP."""
+    import socket
+    while True:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(5.0)
+            print(f"Video bridge: connecting to {bridge_host}:{video_port}...")
+            sock.connect((bridge_host, video_port))
+            sock.settimeout(None)
+            print(f"Video bridge: connected!")
+
+            while True:
+                # Read 4-byte big-endian length prefix
+                header = b""
+                while len(header) < 4:
+                    chunk = sock.recv(4 - len(header))
+                    if not chunk:
+                        raise ConnectionError("Video bridge disconnected")
+                    header += chunk
+                length = struct.unpack('>I', header)[0]
+
+                # Read JPEG data
+                data = b""
+                while len(data) < length:
+                    chunk = sock.recv(min(length - len(data), 65536))
+                    if not chunk:
+                        raise ConnectionError("Video bridge disconnected")
+                    data += chunk
+
+                # Put into frame queue (drop old if full)
+                if _webrtc_frame_queue.full():
+                    try:
+                        _webrtc_frame_queue.get_nowait()
+                    except Empty:
+                        pass
+                _webrtc_frame_queue.put(data)
+
+        except (ConnectionRefusedError, socket.timeout, OSError, ConnectionError) as e:
+            print(f"Video bridge: {e} — retrying in 3s...")
+        finally:
+            try:
+                sock.close()
+            except OSError:
+                pass
+        import time
+        time.sleep(3)
+
+
 def _capture_frame():
     """Blocking call to get one JPEG frame from the robot camera."""
+    if _bridge_mode:
+        # WiFi mode: read from WebRTC frame queue
+        try:
+            return _webrtc_frame_queue.get(timeout=0.5)
+        except Empty:
+            return None
+
     vc = _get_video_client()
     if vc is None:
         return None
@@ -139,6 +336,9 @@ async def websocket_endpoint(ws: WebSocket):
             msg = json.loads(data)
             cmd = msg.get("cmd")
             if cmd == "start":
+                mode = msg.get("mode", navigator.measure_mode)
+                if mode in ("2d", "3d"):
+                    navigator.measure_mode = mode
                 _handle_start_patrol()
             elif cmd == "next":
                 navigator.web_continue()
@@ -178,6 +378,72 @@ async def on_startup():
 _patrol_thread = None
 
 
+def _auto_generate_viz():
+    """Auto-generate 3D + 2D visualizations after patrol completes."""
+    global _3d_gen_status, _3d_gen_message, _2d_gen_status, _2d_gen_message
+    mode = navigator.measure_mode if navigator else "2d"
+
+    # Reset statuses BEFORE spawning thread so UI polling doesn't see
+    # stale "ready" from a previous patrol and load the old PNG.
+    _3d_gen_status = "generating"
+    _3d_gen_message = ""
+    _2d_gen_status = "generating"
+    _2d_gen_message = ""
+
+    # Remove stale phase-specific heatmap PNGs from previous patrols.
+    # Auto-generate writes only the unsuffixed file (phase=None), but the
+    # UI may request ?phase=low which would match a leftover _low.png.
+    for suffix in ("_low", "_high"):
+        stale = DATA_DIR / f"sensor_heatmap_2d{suffix}.png"
+        if stale.exists():
+            stale.unlink()
+
+    def viz_worker():
+        global _3d_gen_status, _3d_gen_message, _2d_gen_status, _2d_gen_message
+
+        try:
+            from sensor_surface_sphere_overlay import generate_3d_html_only
+            generate_3d_html_only(phase=None)
+            _3d_gen_status = "ready"
+            _3d_gen_message = "3D visualization generated"
+            print("Auto-generated 3D visualization")
+        except Exception as e:
+            _3d_gen_status = "error"
+            _3d_gen_message = str(e)
+            print(f"Auto 3D generation failed: {e}")
+
+        try:
+            from sensor_surface_sphere_overlay import generate_2d_heatmap_only
+            generate_2d_heatmap_only(phase=None)
+            _2d_gen_status = "ready"
+            _2d_gen_message = "2D heatmap generated"
+            print("Auto-generated 2D heatmap")
+        except Exception as e:
+            _2d_gen_status = "error"
+            _2d_gen_message = str(e)
+            print(f"Auto 2D generation failed: {e}")
+
+        # Copy generated viz to history directory
+        if navigator and getattr(navigator, '_history_ts', None):
+            ts = navigator._history_ts
+            history_dir = DATA_DIR / "history_data"
+            history_dir.mkdir(exist_ok=True)
+            for src_name, dst_suffix in [
+                ("sensor_heatmap_2d.png", "sensor_heatmap_2d.png"),
+                ("sensor_3d_interactive.html", "sensor_3d_interactive.html"),
+            ]:
+                src = DATA_DIR / src_name
+                if src.exists():
+                    try:
+                        import shutil
+                        shutil.copy2(str(src), str(history_dir / f"{ts}_{dst_suffix}"))
+                        print(f"  History: {ts}_{dst_suffix}")
+                    except OSError as e:
+                        print(f"WARNING: Failed to copy {src_name} to history: {e}")
+
+    threading.Thread(target=viz_worker, daemon=True).start()
+
+
 def _handle_start_patrol():
     """Launch patrol in a background thread."""
     global _patrol_thread
@@ -196,6 +462,10 @@ def _handle_start_patrol():
                     navigator.patrol_error = "Failed to prepare patrol"
                 return
             navigator.start_patrol()
+
+            # Auto-generate visualizations after successful patrol
+            if navigator.nav_state == "done":
+                _auto_generate_viz()
         except Exception as e:
             navigator.nav_state = "error"
             navigator.patrol_error = str(e)
@@ -210,14 +480,25 @@ def _handle_start_patrol():
 # Entry point
 # ------------------------------------------------------------------
 
-def run_web_server(nav, port=8080):
+def run_web_server(nav, port=8080, bridge_mode=False, bridge_host=None,
+                   video_port=9878):
     """Start the web server with the given AutoNavigator instance."""
-    global navigator
+    global navigator, _bridge_mode, _bridge_host
     navigator = nav
+    _bridge_mode = bridge_mode
+    _bridge_host = bridge_host
 
     print(f"\n{'='*50}")
     print(f"  Go2 Patrol Monitor — Web UI")
     print(f"  http://localhost:{port}")
+    if bridge_mode:
+        print(f"  Mode: WiFi (bridge → {bridge_host})")
     print(f"{'='*50}\n")
+
+    # Start video bridge receiver in bridge mode
+    if bridge_mode and bridge_host:
+        video_thread = threading.Thread(
+            target=_init_video_bridge, args=(bridge_host, video_port), daemon=True)
+        video_thread.start()
 
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")

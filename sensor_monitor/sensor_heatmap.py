@@ -26,6 +26,23 @@ import numpy as np
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
+SENSOR_PROFILES = {
+    "sound": {
+        "name": "Sound Intensity",
+        "unit": "",
+        "label": "Sound Level",
+        "precision": 0,
+    },
+    "radiation": {
+        "name": "Radiation",
+        "unit": "\u00b5Sv/h",
+        "label": "Radiation Level",
+        "precision": 3,
+    },
+}
+
+_active_profile = SENSOR_PROFILES["sound"]
+
 
 def _check_alignment(waypoints, source_label="waypoints"):
     """Check if waypoint positions fall on occupied cells in the LiDAR floor plan.
@@ -402,7 +419,10 @@ def visualize_2d(sensor_data, sensor_vmin=None, sensor_vmax=None):
                              edgecolors='black', linewidths=1.5, zorder=5,
                              vmin=sensor_vmin, vmax=sensor_vmax)
         cbar = plt.colorbar(scatter, ax=ax, shrink=0.8)
-        cbar.set_label('Sensor Value', fontsize=12)
+        cbar_label = _active_profile["label"]
+        if _active_profile["unit"]:
+            cbar_label += f' ({_active_profile["unit"]})'
+        cbar.set_label(cbar_label, fontsize=12)
 
         # Label waypoints
         for d in valid_data:
@@ -416,7 +436,8 @@ def visualize_2d(sensor_data, sensor_vmin=None, sensor_vmax=None):
 
     ax.set_xlabel('X (m)', fontsize=12)
     ax.set_ylabel('Y (m)', fontsize=12)
-    ax.set_title('2D Sensor Heatmap', fontsize=14)
+    title = f'2D {_active_profile["name"]} Heatmap'
+    ax.set_title(title, fontsize=14)
     ax.set_aspect('equal')
     ax.legend(loc='upper right')
     ax.grid(True, alpha=0.3)
@@ -440,7 +461,16 @@ def main():
                         help="Min sensor value for color scale (default: auto from data)")
     parser.add_argument("--vmax", type=float, default=None,
                         help="Max sensor value for color scale (default: auto from data)")
+    parser.add_argument("--sensor", choices=["sound", "radiation"], default="sound",
+                        help="Sensor type for labels/units (default: sound)")
     args = parser.parse_args()
+
+    global _active_profile
+    _active_profile = SENSOR_PROFILES.get(args.sensor, SENSOR_PROFILES["sound"])
+    precision = _active_profile["precision"]
+    col_label = _active_profile["label"]
+    if _active_profile["unit"]:
+        col_label += f' ({_active_profile["unit"]})'
 
     if args.cloud_only:
         visualize_cloud_only()
@@ -451,10 +481,10 @@ def main():
         return
 
     # Print sensor value summary table
-    print(f"\n  {'Waypoint':<10} {'Position':<16} {'Sensor Value'}")
-    print(f"  {'--------':<10} {'--------':<16} {'------------'}")
+    print(f"\n  {'Waypoint':<10} {'Position':<16} {col_label}")
+    print(f"  {'--------':<10} {'--------':<16} {'-' * len(col_label)}")
     for d in sensor_data:
-        v_str = f"{d['sensor_value']:.1f}" if d["sensor_value"] is not None else "N/A"
+        v_str = f"{d['sensor_value']:.{precision}f}" if d["sensor_value"] is not None else "N/A"
         print(f"  #{d['waypoint']:<9} ({d['x']:.2f}, {d['y']:.2f}){'':>4} {v_str}")
     print()
 
