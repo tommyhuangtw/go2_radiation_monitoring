@@ -2,7 +2,7 @@
 
 Autonomous environmental sensor monitoring using the Unitree Go2 quadruped robot. The robot builds a 3D LiDAR map of an environment, learns a monitoring route via manual walk-through, then autonomously navigates the route while collecting sensor data at each waypoint. Results are visualized as 2D/3D heatmaps overlaid on the LiDAR map.
 
-![LiDAR floor plan with numbered monitoring waypoints](docs/images/floor_plan.png)
+![2D sensor heatmap overlaid on LiDAR floor plan](docs/images/floor_plan.png)
 
 ## System Architecture
 
@@ -396,8 +396,6 @@ The web UI auto-generates visualizations after patrol. For CLI-only use:
 python sensor_monitor/sensor_heatmap.py --sensor radiation          # 3D + 2D with radiation labels
 python sensor_monitor/sensor_heatmap.py --sensor sound --mode 2d    # 2D only with sound labels
 ```
-
-![2D sensor heatmap overlaid on floor plan](docs/images/sensor_heatmap_2d.png)
 
 ## Script Reference
 
