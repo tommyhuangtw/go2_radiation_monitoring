@@ -5,7 +5,7 @@ Autonomous environmental sensor monitoring using the Unitree Go2 quadruped robot
 <p align="center">
   <img src="docs/images/console_patrol.gif" alt="Operator console during a 14-waypoint hospital patrol" width="100%">
   <br><em>Operator console during a full 14-waypoint patrol in a hospital (sped up 14x): live floor plan with colour-coded readings, camera feed, per-waypoint steps, then the heatmap generated at the end.</em>
-  <br><a href="docs/videos/hospital_patrol_8x.mp4">▶ Watch the full patrol in higher resolution (MP4, 8x speed)</a>
+  <br><a href="docs/videos/go2_demo.mp4">▶ Watch the 90-second walkthrough: mapping, teaching the route, auto patrol and results (MP4)</a>
 </p>
 
 https://github.com/user-attachments/assets/afeb2616-7d72-4594-b08a-03757b46be1d
