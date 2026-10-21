@@ -8,6 +8,8 @@ Autonomous environmental sensor monitoring using the Unitree Go2 quadruped robot
   <br><a href="docs/videos/hospital_patrol_8x.mp4">▶ Watch the full patrol in higher resolution (MP4, 8x speed)</a>
 </p>
 
+https://github.com/user-attachments/assets/afeb2616-7d72-4594-b08a-03757b46be1d
+
 <p align="center">
   <img src="docs/images/robot_in_hospital.jpeg" alt="Go2 with raised sensor mast measuring in a hospital room" width="49%">
   <img src="docs/images/heatmap_3d_hospital.jpeg" alt="3D heatmap of sensor readings over the LiDAR point cloud" width="49%">
